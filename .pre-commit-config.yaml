@@ -1,6 +1,13 @@
-# Local hooks: run the ruff and pyright versions pinned in uv.lock via `uv run`,
-# so nothing is downloaded from GitHub and hook versions never drift from the project's.
 repos:
+  # Secret scanning runs first. gitleaks is a Go tool, not a project dependency, so it
+  # comes from the official hook repo pinned to a release tag.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # Local hooks: run the ruff and pyright versions pinned in uv.lock via `uv run`,
+  # so nothing is downloaded from GitHub and hook versions never drift from the project's.
   - repo: local
     hooks:
       - id: ruff-check
