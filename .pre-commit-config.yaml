@@ -1,0 +1,24 @@
+# Local hooks: run the ruff and pyright versions pinned in uv.lock via `uv run`,
+# so nothing is downloaded from GitHub and hook versions never drift from the project's.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types_or: [python, pyi]
+        # Type-check the whole project, not just changed files, so cross-file errors are caught.
+        pass_filenames: false
