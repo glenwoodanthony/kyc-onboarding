@@ -13,9 +13,17 @@ extraction prompt (prompts/system_prompt.md) expects.
 
 Paddle is an optional dependency (`uv sync --group ocr`) and is imported lazily, so
 this module imports without it.
+
+On Windows the Paddle GPU wheel doesn't bundle cuDNN. The ocr group installs it from
+PyPI (`nvidia-cudnn-cu12`, which brings `nvidia-cublas-cu12`) into
+site-packages/nvidia/*/bin, a folder Paddle doesn't search, so those folders are
+put on the DLL search path before Paddle loads.
 """
 
+import importlib.util
 import logging
+import os
+import sys
 from collections.abc import Iterable, Mapping
 from functools import cache
 from pathlib import Path
@@ -75,7 +83,35 @@ def ocr_image(path: str | Path) -> OcrResult:
     return _run_ppocr(path)
 
 
+def _nvidia_dll_dirs(roots: Iterable[str] | None = None) -> list[Path]:
+    """The bin folders of pip-installed NVIDIA libraries (site-packages/nvidia/*/bin)."""
+    if roots is None:
+        spec = importlib.util.find_spec("nvidia")
+        roots = (spec.submodule_search_locations or []) if spec else []
+    return sorted(p for root in roots for p in Path(root).glob("*/bin") if p.is_dir())
+
+
+# Handles from os.add_dll_directory; a directory stays registered while its handle lives.
+_dll_handles: list[Any] = []
+
+
+def _expose_dll_dirs(dirs: Iterable[Path]) -> None:
+    """Put DLL folders on PATH and the DLL search path, once each (Windows only)."""
+    if sys.platform != "win32":
+        return
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    for directory in dirs:
+        if str(directory) in path_entries:
+            continue
+        # Paddle loads cuDNN with a plain PATH search; add_dll_directory covers
+        # libraries loaded with the safer default search.
+        os.environ["PATH"] = os.pathsep.join([str(directory), *path_entries])
+        path_entries.insert(0, str(directory))
+        _dll_handles.append(os.add_dll_directory(str(directory)))
+
+
 def _gpu_available() -> bool:
+    _expose_dll_dirs(_nvidia_dll_dirs())
     try:
         import paddle  # pyright: ignore[reportMissingImports]
     except ImportError:
@@ -91,6 +127,7 @@ def _gpu_available() -> bool:
 
 @cache
 def _vl_pipeline() -> Any:
+    _expose_dll_dirs(_nvidia_dll_dirs())
     from paddleocr import PaddleOCRVL  # pyright: ignore[reportMissingImports]
 
     return PaddleOCRVL(device="gpu:0")

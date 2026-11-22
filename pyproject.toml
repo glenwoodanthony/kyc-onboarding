@@ -24,6 +24,9 @@ dev = [
 ocr = [
     "paddlepaddle-gpu==3.2.1",
     "paddleocr[doc-parser]>=3.7.0",
+    # The Windows Paddle wheel doesn't bundle cuDNN (Linux gets it via Paddle's own
+    # deps). Matches the version Paddle's Linux build pins. api/ocr.py puts its DLLs on PATH.
+    "nvidia-cudnn-cu12==9.5.1.17; sys_platform == 'win32'",
 ]
 
 # paddlepaddle-gpu isn't on PyPI. `explicit` means only packages pinned below come from here.
