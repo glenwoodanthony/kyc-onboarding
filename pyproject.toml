@@ -18,8 +18,24 @@ dev = [
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "ruff>=0.17.6",
+    "pillow>=10.1",
 ]
+# Optional and large: install with `uv sync --group ocr`.
+ocr = [
+    "paddlepaddle-gpu==3.2.1",
+    "paddleocr[doc-parser]>=3.7.0",
+]
+
+# paddlepaddle-gpu isn't on PyPI. `explicit` means only packages pinned below come from here.
+[[tool.uv.index]]
+name = "paddle-cu126"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cu126/"
+explicit = true
+
+[tool.uv.sources]
+paddlepaddle-gpu = { index = "paddle-cu126" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["ocr: runs real OCR models (needs `uv sync --group ocr`)"]

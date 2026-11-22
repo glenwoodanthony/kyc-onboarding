@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. So far it has the extraction schemas in `api/schemas.py` and the extraction model's system prompt in `prompts/system_prompt.md`, each with its own tests. The folders `capture/`, `reviewer/` and `synthetic/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py` and the extraction model's system prompt in `prompts/system_prompt.md`, each with its own tests. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
 
 ## Extraction schemas (`api/schemas.py`)
 
@@ -23,6 +23,15 @@ This is the system prompt for the extraction model. The model receives OCR text,
 - **Confidence caps:** a source line below 0.70 limits a field's confidence to "low", and one from 0.70 to below 0.90 limits it to "medium".
 - **Unsupported documents:** for anything outside the seven types, the model returns `{"unsupported_document": "<reason>"}`. That shape isn't in the schema, so callers must check for it before validating.
 - **Kept in sync with the schema:** `tests/test_system_prompt.py` parses the prompt's field-list table and compares it with `api/schemas.py`. The ```json example must validate with no flags, and the prompt must never mention images. When you add or rename a document type or field, update the prompt's table and example along with the schema.
+
+## OCR (`api/ocr.py`)
+
+`ocr_image(path) -> OcrResult(markdown, lines, engine)`. Each `Line` has `text`, `confidence` (0–1 or None) and `bbox` (x0, y0, x1, y1).
+
+- **Engines:** with a usable GPU it runs PaddleOCR-VL first. If there's no GPU, or VL raises for any reason, it uses classic PP-OCR (PP-OCRv5 mobile models) on CPU. A VL failure is remembered in `_vl_failure` for the rest of the process. VL lines have `confidence=None` because VL gives no per-line score; PP-OCR lines have recognition scores.
+- **Optional dependency:** Paddle lives in the `ocr` dependency group. Install it with `uv sync --group ocr`. A plain `uv sync` uninstalls it again. `paddlepaddle-gpu` comes from PaddlePaddle's own CUDA 12.6 index, declared in `pyproject.toml`, and has no hashes in `uv.lock`. Paddle imports are lazy, so `api.ocr` imports without the group.
+- **Tests:** unit tests stub the engines. Tests marked `ocr` run real models on `synthetic/ocr_sample.png` and are skipped without the group. Skip them with `-m "not ocr"`, because they take about 30 s. Regenerate the image with `uv run python synthetic/make_ocr_sample.py`.
+- **This machine:** PaddleOCR-VL currently fails because cuDNN 9 (`cudnn64_9.dll`) isn't installed, so the PP-OCR fallback is what actually runs. Models are cached in `~/.paddlex/official_models`. The first download needed the Windows certificate store (`truststore`), because Python's HTTPS doesn't trust the certificate that intercepts traffic on this machine.
 
 ## Tooling
 
