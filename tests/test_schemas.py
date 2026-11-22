@@ -61,33 +61,33 @@ DOC_FIELDS: dict[str, dict[str, Any]] = {
         "expiry_date": "01/01/2030",
         "permit_number": "DP998877",
         "issue_date": "01/01/2020",
-        "address": "12 Main Street, Port of Spain",
+        "address": "12 Example Street, Exampletown",
     },
     "passport": {
         "date_of_birth": "15/03/1990",
         "expiry_date": "01/01/2030",
         "passport_number": "P1234567",
-        "nationality": "Trinidad and Tobago",
+        "nationality": "Fictionland",
         "issue_date": "01/01/2020",
     },
     "birth_certificate": {
         "date_of_birth": "15/03/1990",
         "registration_number": "BC-4455",
-        "place_of_birth": "San Fernando",
+        "place_of_birth": "Sampleville",
     },
     "utility_bill": {
-        "address": "12 Main Street, Port of Spain",
+        "address": "12 Example Street, Exampletown",
         "provider": "Power Co",
         "statement_date": "01/05/2026",
     },
     "payslip": {
         "employer_name": "Acme Ltd",
         "pay_date": "31/05/2026",
-        "address": "12 Main Street, Port of Spain",
+        "address": "12 Example Street, Exampletown",
     },
     "address_letter": {
-        "address": "12 Main Street, Port of Spain",
-        "issuer": "First Bank",
+        "address": "12 Example Street, Exampletown",
+        "issuer": "Example Bank",
         "letter_date": "10/05/2026",
     },
 }
@@ -179,6 +179,11 @@ def test_dates_parse_day_first(text: str) -> None:
     assert DateField.model_validate(fld(text)).value == date(1990, 3, 5)
 
 
+def test_04_07_1990_is_4_july() -> None:
+    # Day-first: 4 July, not the US reading of 7 April.
+    assert DateField.model_validate(fld("04/07/1990")).value == date(1990, 7, 4)
+
+
 def test_day_above_twelve_parses() -> None:
     assert DateField.model_validate(fld("13/01/1990")).value == date(1990, 1, 13)
 
@@ -222,6 +227,14 @@ def test_dob_age_in_range_is_valid(dob: str) -> None:
 def test_dob_age_out_of_range_is_an_error(dob: str) -> None:
     with pytest.raises(ValidationError, match="age"):
         document_adapter.validate_python(make_doc("passport", date_of_birth=dob))
+
+
+def test_15_year_old_fails() -> None:
+    # Today is pinned to 2026-06-15, so this DOB is exactly 15.
+    with pytest.raises(ValidationError, match="age 15"):
+        document_adapter.validate_python(
+            make_doc("passport", date_of_birth="15/06/2011")
+        )
 
 
 def test_dob_in_the_future_is_an_error() -> None:
@@ -354,6 +367,15 @@ def test_small_name_typo_still_matches() -> None:
         make_doc("national_id", name="Jonathon Smith"),
     )
     assert p.flags == []
+
+
+def test_id_vs_birth_certificate_name_mismatch_flags() -> None:
+    p = packet(
+        make_doc("national_id", name="John Smith"),
+        make_doc("birth_certificate", name="Mary Jones"),
+    )
+    assert codes(p.flags) == [FlagCode.NAME_MISMATCH]
+    assert p.flags[0].documents == [0, 1]
 
 
 def test_different_name_is_flagged_not_rejected() -> None:
