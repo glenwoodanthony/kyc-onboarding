@@ -5,6 +5,8 @@ Unit tests stub out the engines and need no Paddle install. Integration tests (m
 """
 
 import logging
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
@@ -170,7 +172,55 @@ def test_lines_from_vl_blocks_split_lines_and_skip_images() -> None:
     ]
 
 
+# --- NVIDIA DLL folders (Windows cuDNN from PyPI) -------------------------
+
+
+def test_nvidia_dll_dirs_finds_each_library_bin(tmp_path: Path) -> None:
+    for lib in ("cudnn", "cublas"):
+        (tmp_path / lib / "bin").mkdir(parents=True)
+    (tmp_path / "no_bin_here").mkdir()
+    assert ocr._nvidia_dll_dirs([str(tmp_path)]) == [
+        tmp_path / "cublas" / "bin",
+        tmp_path / "cudnn" / "bin",
+    ]
+
+
+def test_nvidia_dll_dirs_empty_without_roots() -> None:
+    assert ocr._nvidia_dll_dirs([]) == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="DLL search path is Windows-only")
+def test_expose_dll_dirs_prepends_to_path_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", r"C:\existing")
+    monkeypatch.setattr(ocr, "_dll_handles", [])
+    dirs = [tmp_path / "a", tmp_path / "b"]
+    for d in dirs:
+        d.mkdir()
+    ocr._expose_dll_dirs(dirs)
+    ocr._expose_dll_dirs(dirs)
+    entries = os.environ["PATH"].split(os.pathsep)
+    assert entries == [str(dirs[1]), str(dirs[0]), r"C:\existing"]
+    assert len(ocr._dll_handles) == 2
+
+
 # --- integration: real OCR on the synthetic image --------------------------
+
+
+@pytest.mark.ocr
+def test_vl_runs_on_gpu_when_available() -> None:
+    """Fails if VL silently falls back, e.g. because cuDNN can't be found."""
+    pytest.importorskip("paddleocr")
+    if not ocr._gpu_available():
+        pytest.skip("no CUDA GPU")
+    result = ocr_image(SAMPLE)
+    assert ocr._vl_failure is None
+    assert result.engine == "paddleocr-vl"
+    text = result.markdown.upper()
+    for expected in ("EXAMPLE", "FICTIONLAND", "04/07/1990"):
+        assert expected in text
+    assert all(line.confidence is None for line in result.lines)
 
 
 @pytest.mark.ocr
