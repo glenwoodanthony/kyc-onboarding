@@ -4,7 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early scaffold for a KYC (know-your-customer) onboarding project. It has no application code yet. The top-level packages `api/`, `capture/`, `prompts/`, `reviewer/`, `synthetic/` and `tests/` each hold only a `.gitkeep`, and the README is empty. `pyproject.toml` declares no runtime dependencies, only dev tooling. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file once real modules exist.
+This is an early-stage KYC (know-your-customer) onboarding project. The only code so far is `api/schemas.py` and its tests. The folders `capture/`, `prompts/`, `reviewer/` and `synthetic/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+
+## Extraction schemas (`api/schemas.py`)
+
+These Pydantic v2 models validate extracted documents. Every extracted value is an `ExtractedField` with `value`, `raw_text`, `confidence` (high/medium/low/none) and `note`. Documents are a discriminated union on `document_type`. A `KYCPacket` holds several documents and runs cross-document checks.
+
+The core rule is **errors vs flags**:
+- **ValidationError** is for structurally wrong data: a value given with confidence "none", a date that can't be parsed day-first, a DOB giving an age outside 18–110, or unknown keys (all models use `extra="forbid"`).
+- **Flags** are for things a reviewer should see. They never block loading. An expired document puts a `DOCUMENT_EXPIRED` flag on the document. Names scoring below 85 with rapidfuzz `token_sort_ratio`, or DOBs that aren't exactly equal, put `NAME_MISMATCH` or `DOB_MISMATCH` flags on the packet. Flags are rebuilt on every validation, so a dump→validate round trip doesn't duplicate them.
+- Validators call the module-level `schemas.today()`. Tests monkeypatch it rather than depending on the real date.
 
 ## Tooling
 
