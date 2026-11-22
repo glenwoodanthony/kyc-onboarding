@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. The only code so far is `api/schemas.py` and its tests. The folders `capture/`, `prompts/`, `reviewer/` and `synthetic/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the extraction schemas in `api/schemas.py` and the extraction model's system prompt in `prompts/system_prompt.md`, each with its own tests. The folders `capture/`, `reviewer/` and `synthetic/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
 
 ## Extraction schemas (`api/schemas.py`)
 
@@ -14,6 +14,15 @@ The core rule is **errors vs flags**:
 - **ValidationError** is for structurally wrong data: a value given with confidence "none", a date that can't be parsed day-first, a DOB giving an age outside 18–110, or unknown keys (all models use `extra="forbid"`).
 - **Flags** are for things a reviewer should see. They never block loading. An expired document puts a `DOCUMENT_EXPIRED` flag on the document. Names scoring below 85 with rapidfuzz `token_sort_ratio`, or DOBs that aren't exactly equal, put `NAME_MISMATCH` or `DOB_MISMATCH` flags on the packet. Flags are rebuilt on every validation, so a dump→validate round trip doesn't duplicate them.
 - Validators call the module-level `schemas.today()`. Tests monkeypatch it rather than depending on the real date.
+
+## Extraction prompt (`prompts/system_prompt.md`)
+
+This is the system prompt for the extraction model. The model receives OCR text, not images. Its output is one JSON document that `api/schemas.py` validates.
+
+- **Inputs:** `<ocr_markdown>` holds the OCR text as Markdown, with each line prefixed `L1:`, `L2:` and so on. `<line_confidence>` is optional JSON, `[{"line": n, "confidence": 0–1}]`. The capture step, which doesn't exist yet, must produce exactly this format.
+- **Confidence caps:** a source line below 0.70 limits a field's confidence to "low", and one from 0.70 to below 0.90 limits it to "medium".
+- **Unsupported documents:** for anything outside the seven types, the model returns `{"unsupported_document": "<reason>"}`. That shape isn't in the schema, so callers must check for it before validating.
+- **Kept in sync with the schema:** `tests/test_system_prompt.py` parses the prompt's field-list table and compares it with `api/schemas.py`. The ```json example must validate with no flags, and the prompt must never mention images. When you add or rename a document type or field, update the prompt's table and example along with the schema.
 
 ## Tooling
 
@@ -42,5 +51,6 @@ The hooks in `.pre-commit-config.yaml` run in this order: **gitleaks** (secret s
 This project deals with identity documents, so the repo is set up to keep real personal data out of git:
 
 - `.gitignore` blocks `*.jpg`, `*.png` and `*.pdf` everywhere **except under `synthetic/`**. Test fixtures and sample documents must be synthetic and live in `synthetic/`.
+- Test data and prompt examples use fictional data only: made-up people, and placeholder places and institutions such as Exampletown, Fictionland and Example Bank. Don't use real place, bank or company names.
 - `uploads/` is ignored because it may hold real user identity documents. Never commit from it, and never copy its contents into fixtures.
 - `.env`, `.env.*` and `secrets/` are git-ignored, and Claude is denied access to them in `.claude/settings.json`. Read configuration from environment variables instead of hard-coding it.
