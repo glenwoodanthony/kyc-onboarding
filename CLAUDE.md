@@ -35,6 +35,7 @@ This is the system prompt for the extraction model. The model receives OCR text,
 
 - **Inputs:** `<declared_type>` and `<country>` say what the customer claimed. Country is only a hint for reading formats and must never fill a field. `<ocr_markdown>` holds the OCR text as Markdown, with each line prefixed `L1:`, `L2:` and so on. `<line_confidence>` is optional JSON, `[{"line": n, "confidence": 0–1}]`. `api.extract.format_user_message` builds all four.
 - **Confidence caps:** a source line below 0.70 limits a field's confidence to "low", and one from 0.70 to below 0.90 limits it to "medium".
+- **Multi-line addresses (rule 11):** include every line up to the town and postcode, joined with `, ` in `value` and ` / ` in `raw_text`. It was added because at temperature 0 qwen3:4b always kept only the first line of the address letter's address. New rules go at the end, so the existing rule numbers stay valid: the Output section refers to rules 7 and 8.
 - **Wrong or unsupported documents:** the model always outputs the declared type. If the text isn't that type, every field is null/"none" with a note. There is no `unsupported_document` shape.
 - **Kept in sync with the schema:** `tests/test_system_prompt.py` parses the prompt's field-list table and compares it with `api/schemas.py`. The ```json example must validate with no flags, and the prompt must never mention images. When you add or rename a document type or field, update the prompt's table and example along with the schema.
 
