@@ -18,6 +18,7 @@ RUNS: list[dict[str, Any]] = json.loads(
 # Flags api.extract sets; validating a document can't produce them.
 EXTRACT_FLAGS = {
     FlagCode.EXTRACTION_FAILED,
+    FlagCode.EXTRACTION_INCOMPLETE,
     FlagCode.DOCUMENT_TYPE_MISMATCH,
     FlagCode.PROMPT_INJECTION_SUSPECTED,
 }

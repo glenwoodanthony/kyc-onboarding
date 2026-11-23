@@ -240,13 +240,21 @@ def test_identifying_fields_cover_every_type() -> None:
 # --- failure: never raises ----------------------------------------------------
 
 
-def test_gives_up_after_max_retries(model: Callable[..., list[dict[str, Any]]]) -> None:
+def test_gives_up_after_max_retries_keeping_valid_fields(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
     requests = model(INVALID)
-    result = run()
+    doc = run().document
 
     assert MAX_RETRIES == 2
     assert len(requests) == MAX_RETRIES + 1 == 3
-    assert_failed(result, "passport")
+    # Only passport_number was invalid; everything else is kept.
+    assert doc.passport_number.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.passport_number.confidence is Confidence.NONE  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.full_name.value == "ALEX JORDAN EXAMPLE"
+    assert doc.date_of_birth.value == date(1990, 7, 4)  # pyright: ignore[reportAttributeAccessIssue]
+    assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]
+    assert "passport_number" in doc.flags[0].message
 
 
 def test_non_json_answer_falls_back(
@@ -480,3 +488,130 @@ def test_clean_document_gets_no_injection_flag(
 ) -> None:
     model(passport())
     assert run().document.flags == []
+
+
+# --- keeping valid fields on final failure -----------------------------------------
+
+
+def national_id_answer(**overrides: Any) -> dict[str, Any]:
+    doc = {
+        "document_type": "national_id",
+        "full_name": field("ALEX JORDAN EXAMPLE"),
+        "date_of_birth": field("1990-07-04"),
+        "expiry_date": field("2032-01-14"),
+        "document_number": field("FL-4821-7730"),
+        "issue_date": field("2022-01-15"),
+    }
+    return doc | overrides
+
+
+def test_live_two_digit_year_case_keeps_the_valid_fields(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: DOB "04.07.90" expanded to 1990-07-04, and the issue date's
+    # raw_text garbled to "15.01.2 2022". Before, the whole document was lost.
+    model(
+        national_id_answer(
+            date_of_birth={
+                "value": "1990-07-04",
+                "raw_text": "04.07.90",
+                "confidence": "high",
+                "note": None,
+            },
+            issue_date={
+                "value": "2022-01-15",
+                "raw_text": "15.01.2 2022",
+                "confidence": "high",
+                "note": None,
+            },
+        )
+    )
+    doc = run("national_id").document
+
+    assert doc.full_name.value == "ALEX JORDAN EXAMPLE"
+    assert doc.document_number.value == "FL-4821-7730"  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.expiry_date.value == date(2032, 1, 14)  # pyright: ignore[reportAttributeAccessIssue]
+    for name, raw in (("date_of_birth", "04.07.90"), ("issue_date", "15.01.2 2022")):
+        rejected = getattr(doc, name)
+        assert (rejected.value, rejected.confidence) == (None, Confidence.NONE)
+        assert rejected.raw_text == raw  # kept for the reviewer
+        assert rejected.note.startswith("rejected by validation: ")
+        assert "four-digit year" in rejected.note
+    [flag] = doc.flags
+    assert flag.code is FlagCode.EXTRACTION_INCOMPLETE
+    assert "date_of_birth (" in flag.message and "issue_date (" in flag.message
+    assert "<failed_attempts>" not in flag.message
+
+
+def test_document_level_check_rejects_only_the_field_that_breaks_it(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # A DOB giving age 10 fails HasDOB's age check, a model-level validator.
+    model(passport(date_of_birth=field("2016-06-01")))
+    doc = run().document
+
+    assert doc.date_of_birth.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert "outside 18-110" in doc.date_of_birth.note  # pyright: ignore[reportAttributeAccessIssue, reportOperatorIssue]
+    assert doc.passport_number.value == "FX12B4567"  # pyright: ignore[reportAttributeAccessIssue]
+    assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]
+
+
+def test_salvaged_document_still_gets_the_other_checks(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Both identifying fields invalid -> also a type mismatch; expired -> expired.
+    model(
+        passport(
+            passport_number={"value": "X", "confidence": "none"},
+            date_of_birth={
+                "value": "1990-07-04",
+                "raw_text": "90",
+                "confidence": "low",
+            },
+            expiry_date=field("2020-01-01"),
+        )
+    )
+    codes = {f.code for f in run().document.flags}
+
+    assert codes == {
+        FlagCode.DOCUMENT_EXPIRED,
+        FlagCode.EXTRACTION_INCOMPLETE,
+        FlagCode.DOCUMENT_TYPE_MISMATCH,
+    }
+
+
+def test_missing_field_and_model_flags_in_last_answer(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    answer = passport(passport_number={"value": "X", "confidence": "none"})
+    del answer["nationality"]
+    answer["flags"] = [{"code": "NAME_MISMATCH", "message": "made up"}]
+    model(answer)
+    doc = run().document
+    assert isinstance(doc, Passport)
+
+    assert doc.nationality.value is None
+    assert doc.nationality.note == (
+        "rejected by validation: missing from the model's answer"
+    )
+    assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]
+
+
+def test_fenced_last_answer_is_parsed(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    model("```json\n" + json.dumps(INVALID) + "\n```")
+    assert run().document.full_name.value == "ALEX JORDAN EXAMPLE"
+
+
+def test_every_field_invalid_is_a_failure_with_a_short_reason(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    model(
+        {name: {"value": "X", "confidence": "none"} for name in field_names(Passport)}
+    )
+    result = run()
+
+    assert_failed(result, "passport")
+    message = result.document.flags[0].message
+    assert message == "extraction failed: no valid answer after 3 attempts"

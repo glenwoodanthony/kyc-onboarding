@@ -25,7 +25,7 @@ The core rule is **errors vs flags**:
 - **ValidationError** is for structurally wrong data: a value given with confidence "none", a date that can't be parsed day-first, a date value that its `raw_text` doesn't support (see below), a DOB giving an age outside 18–110, or unknown keys (all models use `extra="forbid"`).
 - **Flags** are for things a reviewer should see. They never block loading. An expired document puts a `DOCUMENT_EXPIRED` flag on the document. Names scoring below 85 with rapidfuzz `token_sort_ratio`, or DOBs that aren't exactly equal, put `NAME_MISMATCH` or `DOB_MISMATCH` flags on the packet. Flags are rebuilt on every validation, so a dump→validate round trip doesn't duplicate them.
 - **A date value must follow from its `raw_text`.** If `DateField.value` is set, `raw_text` must read, day-first, as exactly that date. A leading label (`Date of birth: …`) is allowed, as are ordinals and commas (`4th July, 1990`). This applies at every confidence level. It catches the model filling in what the document doesn't say. Both cases were seen live on qwen3:4b: a two-digit year `04.07.90` became `1990-07-04`, and a bare `2030` became `2030-01-01`. The error messages go back to the model on retry, so they tell it to set the value to null.
-- `api/extract.py` adds three more document flags: `EXTRACTION_FAILED`, `DOCUMENT_TYPE_MISMATCH` and `PROMPT_INJECTION_SUSPECTED`. Only `DOCUMENT_EXPIRED` is rebuilt on validation; other document flags are kept as given.
+- `api/extract.py` adds four more document flags: `EXTRACTION_FAILED`, `EXTRACTION_INCOMPLETE`, `DOCUMENT_TYPE_MISMATCH` and `PROMPT_INJECTION_SUSPECTED`. Only `DOCUMENT_EXPIRED` is rebuilt on validation; other document flags are kept as given.
 - `KYCExtraction` is one extraction result: `declared_type`, `country` and `document`. `DocumentType`, `DOCUMENT_MODELS` (type → model) and `field_names(model)` are derived from the `Document` union.
 - Validators call the module-level `schemas.today()`. Tests monkeypatch it rather than depending on the real date.
 
@@ -54,7 +54,12 @@ This is the system prompt for the extraction model. The model receives OCR text,
 - **Thinking is off:** requests send `reasoning_effort="none"`. With thinking on, qwen3:4b took many minutes per attempt on this machine. Without it a passport takes about 30 s. The prompt plus schema is about 3,300 tokens, against Ollama's default 4,096-token context. If output gets cut off, Instructor raises `IncompleteOutputException` and the result is the `EXTRACTION_FAILED` fallback. Raise the context with `OLLAMA_CONTEXT_LENGTH` on the Ollama server.
 - **Temperature 0:** requests send `temperature=0`, so the same OCR text gets the same answer. With Ollama's default sampling, the same synthetic image gave different answers on different runs.
 - **Retries:** `MAX_RETRIES = 2` is passed straight to Instructor. In Instructor 1.x `max_retries` counts retries, so the model is called at most 3 times, each retry carrying the previous validation errors.
-- **Never raises on model failure:** on `InstructorRetryException`, unparseable output or any `openai.OpenAIError` (Ollama down, model not pulled), it returns the declared type with every field at confidence "none" and one `EXTRACTION_FAILED` flag giving the reason.
+- **Never raises on model failure, and keeps what was valid:** if the last attempt is still invalid, `_salvage` takes that answer (`InstructorRetryException.last_completion`) and keeps it field by field.
+  - It starts from an all-null document and adds each field only if the document still validates. That way document-level checks, such as the DOB age range, reject the field that breaks them.
+  - Rejected fields become null with confidence "none". The note reads `rejected by validation: <reason>`, and the model's `raw_text` is kept.
+  - The document gets `EXTRACTION_INCOMPLETE`, which lists the rejected fields and why. The type-mismatch and injection checks still run on what's kept.
+  - This replaced "throw everything away": live, qwen3:4b lost a correct name, number and expiry on the two-digit-year ID because one date stayed invalid.
+  - Only when nothing can be kept (Ollama down or model not pulled, cut-off or non-JSON output, every field rejected) does it return every field at "none" with `EXTRACTION_FAILED`. Its reason is one short line, not Instructor's dump of every attempt.
 - **Line confidence** goes to the model only for PP-OCR, whose Markdown is exactly its lines. VL Markdown is numbered without scores, skipping blank lines.
 - **Tests** need no Ollama. They replace `_openai_client` with a real `openai.OpenAI` on an `httpx2.MockTransport` (`openai` 3.x is built on `httpx2`, not `httpx`), so Instructor's real parsing and retry loop run.
 
@@ -64,7 +69,7 @@ This is the system prompt for the extraction model. The model receives OCR text,
 
 - The JSON goes to stdout, or to FILE with `-o`. The OCR text goes to stderr, numbered `L1:`, `L2:` … with PP-OCR's confidence scores, so a wrong field can be traced to the OCR or to the model.
 - `--cpu` passes `ocr_image(..., use_gpu=False)` and goes straight to PP-OCR. On this machine a run takes about 75 s that way, against about 150 s with VL, because VL and Ollama compete for the 4 GB GPU.
-- Exit codes: 0 when a document was extracted, 1 for `EXTRACTION_FAILED`, 2 when the image is missing.
+- Exit codes: 0 when a document was extracted (including `EXTRACTION_INCOMPLETE`), 1 for `EXTRACTION_FAILED`, 2 when the image is missing.
 - The script puts the repo root on `sys.path` itself, because running a file puts only `scripts/` there.
 
 ## OCR (`api/ocr.py`)

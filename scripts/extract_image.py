@@ -12,8 +12,9 @@ Needs the OCR models (`uv sync --group ocr`), Ollama running, and OLLAMA_BASE_UR
 and STRUCTURING_MODEL in .env.
 
 Exit code: 0 when a document was extracted, 1 when extraction failed (every field
-"none" with an EXTRACTION_FAILED flag). Other flags, such as DOCUMENT_EXPIRED, don't
-change the exit code.
+"none" with an EXTRACTION_FAILED flag). Other flags don't change the exit code,
+including EXTRACTION_INCOMPLETE (some fields were nulled, the rest were kept) and
+DOCUMENT_EXPIRED.
 """
 
 import argparse

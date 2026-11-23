@@ -8,7 +8,7 @@ import pytest
 
 from api.extract import _failed  # pyright: ignore[reportPrivateUsage]
 from api.ocr import Line, OcrResult
-from api.schemas import KYCExtraction
+from api.schemas import Flag, FlagCode, KYCExtraction
 from scripts import extract_image
 
 OCR = OcrResult(
@@ -114,3 +114,16 @@ def test_missing_image_exits_2(calls: dict[str, Any], tmp_path: Path) -> None:
 def test_unknown_type_is_rejected(image: Path) -> None:
     with pytest.raises(SystemExit):
         extract_image.main([str(image), "library_card", "Fictionland"])
+
+
+def test_incomplete_extraction_exits_0(
+    calls: dict[str, Any], image: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = ok_result()
+    result.document.flags = [
+        Flag(code=FlagCode.EXTRACTION_INCOMPLETE, message="address (invalid)")
+    ]
+    calls["result"] = result
+
+    assert extract_image.main([str(image), "utility_bill", "Fictionland"]) == 0
+    assert "FLAG EXTRACTION_INCOMPLETE: address (invalid)" in capsys.readouterr().err

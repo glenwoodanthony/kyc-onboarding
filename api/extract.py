@@ -8,9 +8,10 @@ in api/schemas.py.
 - The answer is validated against the declared type only, which keeps the schema
   small for a small model. Validation errors go back to the model for another try,
   up to MAX_RETRIES times.
-- Model failures never raise. If no valid document comes back (bad output on every
-  attempt, Ollama down, timeout), the result is the declared type with every field
-  at confidence "none" and an EXTRACTION_FAILED flag.
+- Model failures never raise. If the last attempt is still invalid, its valid
+  fields are kept, the invalid ones are nulled, and the document is flagged
+  EXTRACTION_INCOMPLETE. If nothing can be kept (Ollama down, timeout, no JSON),
+  every field is "none" and the flag is EXTRACTION_FAILED.
 - OCR lines that read like instructions to the model are withheld from it and the
   document is flagged PROMPT_INJECTION_SUSPECTED (see instruction_lines).
 - A missing setting (OLLAMA_BASE_URL, STRUCTURING_MODEL in .env or the environment)
@@ -31,6 +32,7 @@ from instructor.core.exceptions import (
     InstructorRetryException,
     ResponseParsingError,
 )
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from api.ocr import OcrResult
@@ -259,18 +261,118 @@ def extract(
             ],
         )
     except MODEL_FAILURES as exc:
-        reason = f"extraction failed: {type(exc).__name__}: {exc}"
-        logger.warning("%s extraction failed: %s", declared_type, reason)
-        return _failed(declared_type, country, reason, injection)
+        salvaged = _salvage(exc, model_cls)
+        if salvaged is None:
+            reason = f"extraction failed: {_short_error(exc)}"
+            logger.warning("%s %s", declared_type, reason)
+            return _failed(declared_type, country, reason, injection)
+        data, rejected = salvaged
+        logger.warning(
+            "%s extraction incomplete, rejected: %s", declared_type, ", ".join(rejected)
+        )
+        incomplete = Flag(
+            code=FlagCode.EXTRACTION_INCOMPLETE,
+            message=f"after {MAX_RETRIES + 1} attempts these fields were still "
+            "invalid and were set to null: "
+            + "; ".join(f"{name} ({why})" for name, why in rejected.items()),
+        )
+        doc = model_cls.model_validate(data)
+        flags = [incomplete]
+    else:
+        # Rebuild from the fields alone, so the only flags are the ones code sets.
+        data = doc.model_dump(exclude={"flags"})
+        flags = []
 
-    # Rebuild from the fields alone, so the only flags are the ones code sets.
-    data: dict[str, Any] = doc.model_dump(exclude={"flags"})
-    flags = [
-        flag
-        for flag in (_type_mismatch(doc, declared_type), injection)
-        if flag is not None
-    ]
+    flags += [f for f in (_type_mismatch(doc, declared_type), injection) if f]
     return _build(declared_type, country, data, flags)
+
+
+# --- keeping what was valid when the model never fully succeeds ----------------
+#
+# Seen live: on a national ID with a two-digit-year DOB, qwen3:4b expanded the
+# year twice (rejected), then fixed it but garbled the issue date's raw_text
+# (rejected). Throwing the whole document away lost a correct name, number and
+# expiry. So on final failure the last answer is kept field by field.
+
+MAX_REASON_CHARS = 200
+
+
+def _salvage(
+    exc: Exception, model_cls: type[BaseDocument]
+) -> tuple[dict[str, Any], dict[str, str]] | None:
+    """The last answer's valid fields, plus {rejected field: why}.
+
+    None when there's nothing to keep: no answer (Ollama down), an answer that isn't
+    a JSON object, or every field rejected.
+
+    Fields are added to an all-null document one at a time and kept only if the
+    document still validates, so document-level checks (the DOB age range) reject
+    the field that breaks them.
+    """
+    answer = _last_answer(exc)
+    if answer is None:
+        return None
+
+    data: dict[str, Any] = {name: _null_field() for name in field_names(model_cls)}
+    rejected: dict[str, str] = {}
+    for name in field_names(model_cls):
+        candidate = answer.get(name)
+        if candidate is None:
+            rejected[name] = "missing from the model's answer"
+            continue
+        try:
+            model_cls.model_validate({**data, name: candidate})
+        except ValidationError as err:
+            rejected[name] = _clip(err.errors()[0]["msg"])
+            continue
+        data[name] = candidate
+
+    if len(rejected) == len(data):
+        return None
+    for name, why in rejected.items():
+        raw = answer.get(name)
+        raw_text = raw.get("raw_text") if isinstance(raw, dict) else None
+        data[name] = _null_field(
+            raw_text if isinstance(raw_text, str) else None,
+            note=f"rejected by validation: {why}",
+        )
+    return data, rejected
+
+
+def _last_answer(exc: Exception) -> dict[str, Any] | None:
+    """The JSON object in the model's last answer, if there is one."""
+    completion = getattr(exc, "last_completion", None)
+    try:
+        content = completion.choices[0].message.content  # pyright: ignore[reportOptionalMemberAccess]
+    except (AttributeError, IndexError, TypeError):
+        return None
+    if not isinstance(content, str):
+        return None
+    # Instructor's JSON mode tolerates fences and chatter around the object; so do we.
+    start, end = content.find("{"), content.rfind("}")
+    if start == -1 or end < start:
+        return None
+    try:
+        answer = json.loads(content[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+def _null_field(raw_text: str | None = None, note: str | None = None) -> dict[str, Any]:
+    return {"value": None, "raw_text": raw_text, "confidence": "none", "note": note}
+
+
+def _clip(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= MAX_REASON_CHARS else text[: MAX_REASON_CHARS - 1] + "…"
+
+
+def _short_error(exc: Exception) -> str:
+    """One readable line. A retry exception's str() is a dump of every attempt."""
+    if isinstance(exc, InstructorRetryException):
+        return f"no valid answer after {MAX_RETRIES + 1} attempts"
+    return _clip(f"{type(exc).__name__}: {exc}")
 
 
 def _type_mismatch(doc: BaseDocument, declared_type: DocumentType) -> Flag | None:
