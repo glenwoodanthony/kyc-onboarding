@@ -205,6 +205,70 @@ def test_null_date_with_none_confidence() -> None:
     assert DateField.model_validate(fld(None, "none")).value is None
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("4th July 1990", date(1990, 7, 4)),
+        ("4 July, 1990", date(1990, 7, 4)),
+        ("1st Jul 1990", date(1990, 7, 1)),
+        ("22nd March 1985", date(1985, 3, 22)),
+    ],
+)
+def test_ordinals_and_commas_parse(text: str, expected: date) -> None:
+    assert DateField.model_validate(fld(text)).value == expected
+
+
+# --- date value must follow from raw_text ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "04/07/1990",
+        "04.07.1990",
+        "04 JUL 1990",
+        "4th July 1990",
+        "Date of birth: 04/07/1990",
+        "1990-07-04",
+    ],
+)
+def test_value_matching_raw_text_is_accepted(raw_text: str) -> None:
+    field = DateField.model_validate(fld("1990-07-04", raw_text=raw_text))
+    assert field.value == date(1990, 7, 4)
+
+
+@pytest.mark.parametrize("confidence", ["high", "medium", "low"])
+def test_two_digit_year_cannot_support_a_value(confidence: str) -> None:
+    # Seen live: qwen3:4b expanded 04.07.90 to 1990-07-04 despite the prompt.
+    with pytest.raises(ValidationError, match="four-digit year"):
+        DateField.model_validate(fld("1990-07-04", confidence, raw_text="04.07.90"))
+
+
+def test_bare_year_cannot_be_padded_to_a_date() -> None:
+    # Seen live on a creased permit: raw "2030" became 2030-01-01 at confidence low.
+    with pytest.raises(ValidationError, match="set value to null"):
+        DateField.model_validate(fld("2030-01-01", "low", raw_text="2030"))
+
+
+def test_value_contradicting_raw_text_is_an_error() -> None:
+    # A month-first reading of 04/07/1990.
+    with pytest.raises(ValidationError, match="reads day-first as 1990-07-04"):
+        DateField.model_validate(fld("1990-04-07", raw_text="04/07/1990"))
+
+
+def test_date_value_without_raw_text_is_an_error() -> None:
+    data = {"value": "1990-07-04", "raw_text": None, "confidence": "high"}
+    with pytest.raises(ValidationError, match="has no raw_text"):
+        DateField.model_validate(data)
+
+
+def test_unreadable_raw_text_is_fine_when_value_is_null() -> None:
+    field = DateField.model_validate(
+        {"value": None, "raw_text": "04.07.90", "confidence": "low", "note": "2-digit"}
+    )
+    assert field.value is None
+
+
 # --- DOB gives age 18-110 --------------------------------------------------
 
 

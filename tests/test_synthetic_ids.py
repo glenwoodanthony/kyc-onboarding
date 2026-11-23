@@ -40,7 +40,11 @@ def test_expected_values_validate_with_the_expected_flags(run: dict[str, Any]) -
 
     doc = model.model_validate(
         {
-            name: {"value": value, "confidence": "high" if value else "none"}
+            name: {
+                "value": value,
+                "raw_text": value,
+                "confidence": "high" if value else "none",
+            }
             for name, value in run["expected"].items()
         }
     )
