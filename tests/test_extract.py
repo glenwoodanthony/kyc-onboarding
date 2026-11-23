@@ -202,6 +202,40 @@ def test_all_fields_none_flags_type_mismatch(
     assert [f.code for f in doc.flags] == [FlagCode.DOCUMENT_TYPE_MISMATCH]
 
 
+EMPTY = {"value": None, "raw_text": None, "confidence": "none", "note": None}
+
+
+def test_name_alone_still_flags_type_mismatch(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: a payslip declared as passport came back with full_name taken from
+    # "Employee: Alex Jordan Example" and every other field null.
+    model(
+        {name: EMPTY for name in field_names(Passport)}
+        | {"document_type": "passport", "full_name": field("Alex Jordan Example")}
+    )
+
+    flags = run().document.flags
+    assert [f.code for f in flags] == [FlagCode.DOCUMENT_TYPE_MISMATCH]
+    assert "no passport_number or date_of_birth found" in flags[0].message
+
+
+@pytest.mark.parametrize("missing", ["passport_number", "date_of_birth"])
+def test_one_identifying_field_is_enough(
+    model: Callable[..., list[dict[str, Any]]], missing: str
+) -> None:
+    # A real passport with one field unreadable is not a type mismatch.
+    model(passport(**{missing: EMPTY}))
+    assert run().document.flags == []
+
+
+def test_identifying_fields_cover_every_type() -> None:
+    assert set(extract_mod.IDENTIFYING_FIELDS) == set(DOCUMENT_MODELS)
+    for doc_type, names in extract_mod.IDENTIFYING_FIELDS.items():
+        assert names, doc_type
+        assert set(names) <= set(field_names(DOCUMENT_MODELS[doc_type])), doc_type
+
+
 # --- failure: never raises ----------------------------------------------------
 
 

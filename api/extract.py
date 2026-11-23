@@ -33,7 +33,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from api.ocr import OcrResult
 from api.schemas import (
     DOCUMENT_MODELS,
-    Confidence,
+    BaseDocument,
     DocumentType,
     Flag,
     FlagCode,
@@ -55,6 +55,22 @@ MAX_RETRIES = 2
 # minutes and eats into Ollama's default 4096-token context, which the prompt and
 # schema already fill to about 3300 tokens. Without it a passport takes about 30 s.
 REASONING_EFFORT = "none"
+
+# The fields that make a document that type: its number or reference, plus the date
+# that defines it. If none has a value, the text is probably another document,
+# so it's flagged DOCUMENT_TYPE_MISMATCH. "Every field none" wasn't enough: given a
+# payslip declared as a passport, qwen3:4b filled full_name from the payslip's
+# "Employee:" line and left the rest null. A real document that's only partly
+# unreadable keeps at least one of these, so it isn't flagged.
+IDENTIFYING_FIELDS: dict[DocumentType, tuple[str, ...]] = {
+    "national_id": ("document_number", "date_of_birth"),
+    "drivers_permit": ("permit_number", "date_of_birth"),
+    "passport": ("passport_number", "date_of_birth"),
+    "birth_certificate": ("registration_number", "date_of_birth"),
+    "utility_bill": ("provider", "statement_date"),
+    "payslip": ("employer_name", "pay_date"),
+    "address_letter": ("issuer", "letter_date"),
+}
 
 # Failures that mean "the model gave no usable document", as opposed to bugs.
 MODEL_FAILURES = (
@@ -144,18 +160,20 @@ def extract(
 
     # Rebuild from the fields alone, so the only flags are the ones code sets.
     data: dict[str, Any] = doc.model_dump(exclude={"flags"})
-    flags: list[Flag] = []
-    if all(
-        getattr(doc, name).confidence is Confidence.NONE
-        for name in field_names(model_cls)
-    ):
-        flags.append(
-            Flag(
-                code=FlagCode.DOCUMENT_TYPE_MISMATCH,
-                message=f"no fields found; the document may not be a {declared_type}",
-            )
-        )
-    return _build(declared_type, country, data, flags)
+    mismatch = _type_mismatch(doc, declared_type)
+    return _build(declared_type, country, data, [mismatch] if mismatch else [])
+
+
+def _type_mismatch(doc: BaseDocument, declared_type: DocumentType) -> Flag | None:
+    """DOCUMENT_TYPE_MISMATCH when none of the type's identifying fields has a value."""
+    names = IDENTIFYING_FIELDS[declared_type]
+    if any(getattr(doc, name).value is not None for name in names):
+        return None
+    return Flag(
+        code=FlagCode.DOCUMENT_TYPE_MISMATCH,
+        message=f"no {' or '.join(names)} found; the document may not be a "
+        f"{declared_type}",
+    )
 
 
 def _failed(declared_type: DocumentType, country: str, reason: str) -> KYCExtraction:
