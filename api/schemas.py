@@ -45,6 +45,9 @@ class FlagCode(StrEnum):
     DOB_MISMATCH = "DOB_MISMATCH"
     # Set by api.extract: the model gave no valid document after every attempt.
     EXTRACTION_FAILED = "EXTRACTION_FAILED"
+    # Set by api.extract: the last attempt still had invalid fields; those were set
+    # to null and the rest kept. The message names them and why.
+    EXTRACTION_INCOMPLETE = "EXTRACTION_INCOMPLETE"
     # Set by api.extract: none of the declared type's identifying fields (its number
     # and defining date) was found, so the text may be another document.
     DOCUMENT_TYPE_MISMATCH = "DOCUMENT_TYPE_MISMATCH"
