@@ -65,14 +65,18 @@ class OcrResult(BaseModel):
 _vl_failure: str | None = None
 
 
-def ocr_image(path: str | Path) -> OcrResult:
-    """OCR one image. Tries PaddleOCR-VL on GPU, falls back to PP-OCR on CPU."""
+def ocr_image(path: str | Path, *, use_gpu: bool = True) -> OcrResult:
+    """OCR one image. Tries PaddleOCR-VL on GPU, falls back to PP-OCR on CPU.
+
+    `use_gpu=False` goes straight to PP-OCR: faster on small GPUs, gives per-line
+    confidence, and leaves the GPU to the extraction model.
+    """
     global _vl_failure
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
 
-    if _vl_failure is None and _gpu_available():
+    if use_gpu and _vl_failure is None and _gpu_available():
         try:
             return _run_vl(path)
         except Exception as exc:  # noqa: BLE001 - any VL failure means: use the fallback

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `scripts/` holds developer tools that aren't part of the app. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
 
 ## Extraction schemas (`api/schemas.py`)
 
@@ -38,9 +38,18 @@ This is the system prompt for the extraction model. The model receives OCR text,
 - **Line confidence** goes to the model only for PP-OCR, whose Markdown is exactly its lines. VL Markdown is numbered without scores, skipping blank lines.
 - **Tests** need no Ollama. They replace `_openai_client` with a real `openai.OpenAI` on an `httpx2.MockTransport` (`openai` 3.x is built on `httpx2`, not `httpx`), so Instructor's real parsing and retry loop run.
 
+## Running the pipeline on one image (`scripts/extract_image.py`)
+
+`uv run python scripts/extract_image.py IMAGE DECLARED_TYPE COUNTRY [--cpu] [-o FILE]` runs OCR and then extraction on one image, all locally.
+
+- The JSON goes to stdout, or to FILE with `-o`. The OCR text goes to stderr, numbered `L1:`, `L2:` … with PP-OCR's confidence scores, so a wrong field can be traced to the OCR or to the model.
+- `--cpu` passes `ocr_image(..., use_gpu=False)` and goes straight to PP-OCR. On this machine a run takes about 75 s that way, against about 150 s with VL, because VL and Ollama compete for the 4 GB GPU.
+- Exit codes: 0 when a document was extracted, 1 for `EXTRACTION_FAILED`, 2 when the image is missing.
+- The script puts the repo root on `sys.path` itself, because running a file puts only `scripts/` there.
+
 ## OCR (`api/ocr.py`)
 
-`ocr_image(path) -> OcrResult(markdown, lines, engine)`. Each `Line` has `text`, `confidence` (0–1 or None) and `bbox` (x0, y0, x1, y1).
+`ocr_image(path, *, use_gpu=True) -> OcrResult(markdown, lines, engine)`. Each `Line` has `text`, `confidence` (0–1 or None) and `bbox` (x0, y0, x1, y1). `use_gpu=False` skips VL and goes straight to PP-OCR.
 
 - **Engines:** with a usable GPU it runs PaddleOCR-VL first. If there's no GPU, or VL raises for any reason, it uses classic PP-OCR (PP-OCRv5 mobile models) on CPU. A VL failure is remembered in `_vl_failure` for the rest of the process. VL lines have `confidence=None` because VL gives no per-line score; PP-OCR lines have recognition scores.
 - **Optional dependency:** Paddle lives in the `ocr` dependency group. Install it with `uv sync --group ocr`. A plain `uv sync` uninstalls it again. `paddlepaddle-gpu` comes from PaddlePaddle's own CUDA 12.6 index, declared in `pyproject.toml`, and has no hashes in `uv.lock`. Paddle imports are lazy, so `api.ocr` imports without the group.

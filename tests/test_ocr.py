@@ -72,6 +72,14 @@ def test_gpu_uses_vl(
     assert calls == ["vl"]
 
 
+def test_use_gpu_false_skips_vl(
+    calls: list[str], image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "_gpu_available", lambda: True)
+    assert ocr_image(image, use_gpu=False).engine == "pp-ocr"
+    assert calls == ["ppocr"]
+
+
 @pytest.mark.parametrize(
     "error", [MemoryError("out of memory"), RuntimeError("CUDA error")]
 )
