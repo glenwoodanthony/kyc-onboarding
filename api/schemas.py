@@ -13,7 +13,7 @@ import re
 from datetime import date, datetime
 from enum import StrEnum
 from itertools import combinations
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from rapidfuzz import fuzz
@@ -43,6 +43,11 @@ class FlagCode(StrEnum):
     DOCUMENT_EXPIRED = "DOCUMENT_EXPIRED"
     NAME_MISMATCH = "NAME_MISMATCH"
     DOB_MISMATCH = "DOB_MISMATCH"
+    # Set by api.extract: the model gave no valid document after every attempt.
+    EXTRACTION_FAILED = "EXTRACTION_FAILED"
+    # Set by api.extract: every field came back "none", so the text may not be the
+    # declared document type.
+    DOCUMENT_TYPE_MISMATCH = "DOCUMENT_TYPE_MISMATCH"
 
 
 class StrictModel(BaseModel):
@@ -194,6 +199,38 @@ type Document = Annotated[
     | AddressLetter,
     Field(discriminator="document_type"),
 ]
+
+type DocumentType = Literal[
+    "national_id",
+    "drivers_permit",
+    "passport",
+    "birth_certificate",
+    "utility_bill",
+    "payslip",
+    "address_letter",
+]
+
+DOCUMENT_MODELS: dict[DocumentType, type[BaseDocument]] = {
+    model.model_fields["document_type"].default: model
+    for model in get_args(get_args(Document.__value__)[0])
+}
+
+# Keys of a document model that are not extracted fields.
+NON_FIELD_KEYS = frozenset({"document_type", "flags"})
+
+
+def field_names(model: type[BaseDocument]) -> list[str]:
+    """The extracted-field names of a document model, in declaration order."""
+    return [name for name in model.model_fields if name not in NON_FIELD_KEYS]
+
+
+class KYCExtraction(StrictModel):
+    """One document extracted from OCR text, with what the caller declared about it."""
+
+    declared_type: DocumentType
+    # Country the document was declared as coming from; a reading hint, not a field.
+    country: str
+    document: Document
 
 
 # --- packet ----------------------------------------------------------------

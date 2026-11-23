@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py` and the extraction model's system prompt in `prompts/system_prompt.md`, each with its own tests. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
 
 ## Extraction schemas (`api/schemas.py`)
 
@@ -13,16 +13,30 @@ These Pydantic v2 models validate extracted documents. Every extracted value is 
 The core rule is **errors vs flags**:
 - **ValidationError** is for structurally wrong data: a value given with confidence "none", a date that can't be parsed day-first, a DOB giving an age outside 18–110, or unknown keys (all models use `extra="forbid"`).
 - **Flags** are for things a reviewer should see. They never block loading. An expired document puts a `DOCUMENT_EXPIRED` flag on the document. Names scoring below 85 with rapidfuzz `token_sort_ratio`, or DOBs that aren't exactly equal, put `NAME_MISMATCH` or `DOB_MISMATCH` flags on the packet. Flags are rebuilt on every validation, so a dump→validate round trip doesn't duplicate them.
+- `api/extract.py` adds two more document flags: `EXTRACTION_FAILED` and `DOCUMENT_TYPE_MISMATCH`. Only `DOCUMENT_EXPIRED` is rebuilt on validation; other document flags are kept as given.
+- `KYCExtraction` is one extraction result: `declared_type`, `country` and `document`. `DocumentType`, `DOCUMENT_MODELS` (type → model) and `field_names(model)` are derived from the `Document` union.
 - Validators call the module-level `schemas.today()`. Tests monkeypatch it rather than depending on the real date.
 
 ## Extraction prompt (`prompts/system_prompt.md`)
 
 This is the system prompt for the extraction model. The model receives OCR text, not images. Its output is one JSON document that `api/schemas.py` validates.
 
-- **Inputs:** `<ocr_markdown>` holds the OCR text as Markdown, with each line prefixed `L1:`, `L2:` and so on. `<line_confidence>` is optional JSON, `[{"line": n, "confidence": 0–1}]`. The capture step, which doesn't exist yet, must produce exactly this format.
+- **Inputs:** `<declared_type>` and `<country>` say what the customer claimed. Country is only a hint for reading formats and must never fill a field. `<ocr_markdown>` holds the OCR text as Markdown, with each line prefixed `L1:`, `L2:` and so on. `<line_confidence>` is optional JSON, `[{"line": n, "confidence": 0–1}]`. `api.extract.format_user_message` builds all four.
 - **Confidence caps:** a source line below 0.70 limits a field's confidence to "low", and one from 0.70 to below 0.90 limits it to "medium".
-- **Unsupported documents:** for anything outside the seven types, the model returns `{"unsupported_document": "<reason>"}`. That shape isn't in the schema, so callers must check for it before validating.
+- **Wrong or unsupported documents:** the model always outputs the declared type. If the text isn't that type, every field is null/"none" with a note. There is no `unsupported_document` shape.
 - **Kept in sync with the schema:** `tests/test_system_prompt.py` parses the prompt's field-list table and compares it with `api/schemas.py`. The ```json example must validate with no flags, and the prompt must never mention images. When you add or rename a document type or field, update the prompt's table and example along with the schema.
+
+## Extraction (`api/extract.py`)
+
+`extract(ocr, declared_type, country) -> KYCExtraction`. It sends the OCR text and the system prompt to a local model through Ollama's OpenAI-compatible endpoint, using Instructor (`Mode.JSON`).
+
+- **Settings:** `Settings` (pydantic-settings) reads `OLLAMA_BASE_URL` (for example `http://localhost:11434/v1`) and `STRUCTURING_MODEL` (for example `qwen3:4b`) from the environment, then from `<repo>/.env`. There are no defaults in code, so a missing setting raises. Claude can't read or edit `.env`; the user maintains it.
+- **Pinned to the declared type:** Instructor validates against `DOCUMENT_MODELS[declared_type]` only, which keeps the schema small for a small model. Any `flags` the model outputs are dropped and the document is re-validated, so only code sets flags. If every field comes back "none", the document gets `DOCUMENT_TYPE_MISMATCH`.
+- **Thinking is off:** requests send `reasoning_effort="none"`. With thinking on, qwen3:4b took many minutes per attempt on this machine. Without it a passport takes about 30 s. The prompt plus schema is about 3,300 tokens, against Ollama's default 4,096-token context. If output gets cut off, Instructor raises `IncompleteOutputException` and the result is the `EXTRACTION_FAILED` fallback. Raise the context with `OLLAMA_CONTEXT_LENGTH` on the Ollama server.
+- **Retries:** `MAX_RETRIES = 2` is passed straight to Instructor. In Instructor 1.x `max_retries` counts retries, so the model is called at most 3 times, each retry carrying the previous validation errors.
+- **Never raises on model failure:** on `InstructorRetryException`, unparseable output or any `openai.OpenAIError` (Ollama down, model not pulled), it returns the declared type with every field at confidence "none" and one `EXTRACTION_FAILED` flag giving the reason.
+- **Line confidence** goes to the model only for PP-OCR, whose Markdown is exactly its lines. VL Markdown is numbered without scores, skipping blank lines.
+- **Tests** need no Ollama. They replace `_openai_client` with a real `openai.OpenAI` on an `httpx2.MockTransport` (`openai` 3.x is built on `httpx2`, not `httpx`), so Instructor's real parsing and retry loop run.
 
 ## OCR (`api/ocr.py`)
 

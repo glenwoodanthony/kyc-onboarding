@@ -69,6 +69,17 @@ def test_prompt_does_not_mention_images() -> None:
     assert re.search(r"image", PROMPT, re.IGNORECASE) is None
 
 
-def test_prompt_describes_both_inputs() -> None:
-    assert "<ocr_markdown>" in PROMPT
-    assert "<line_confidence>" in PROMPT
+def test_prompt_describes_every_input() -> None:
+    # The blocks api.extract.format_user_message sends.
+    for block in (
+        "<declared_type>",
+        "<country>",
+        "<ocr_markdown>",
+        "<line_confidence>",
+    ):
+        assert block in PROMPT
+
+
+def test_prompt_has_no_unsupported_document_shape() -> None:
+    # api.extract validates against the declared type only; that shape would never load.
+    assert "unsupported_document" not in PROMPT
