@@ -4,7 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `scripts/` holds developer tools that aren't part of the app. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `scripts/` holds developer tools that aren't part of the app.
+
+## Synthetic documents (`synthetic/ids/`)
+
+`uv run python synthetic/make_id_samples.py` renders 10 fictional documents for trying the pipeline (all seven types, plus damaged and edge-case variants) and writes `synthetic/ids/expected.json`. The same fictional person, ALEX JORDAN EXAMPLE, born 4 July 1990, is on every document.
+
+- **Output is deterministic:** the noise is seeded, so regenerating gives byte-identical files.
+- **`expected.json` is the answer key:** one entry per run, giving the image, the declared type and country to pass, what the run probes, the expected values (null where a field should come back empty) and the expected flags. Compare values by meaning. Addresses, for example, may be joined with ", " or " / ".
+- **The cases probe specific things:** two-digit years, a two-line address, an expired passport with a machine-readable zone, an ambiguous `03/04/2026`, a prompt-injection line in the utility bill, a wrong-type run (payslip declared as passport), and degraded and creased permits.
+- **What PP-OCR does on them:** it drops spaces and misreads text while still scoring 0.95 or more. Only local damage, like the crease, gives lines below 0.90.
+- **`tests/test_synthetic_ids.py`** checks that every image exists and that the expected values validate against `api/schemas.py` with exactly the expected flags. It doesn't run OCR or the model. Change the generator and the key together.
+- `synthetic/ocr_sample.png` (from `make_ocr_sample.py`) is separate. The `ocr` tests use it, so leave it alone. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
 
 ## Extraction schemas (`api/schemas.py`)
 
