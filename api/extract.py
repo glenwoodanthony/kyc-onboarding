@@ -56,6 +56,11 @@ MAX_RETRIES = 2
 # schema already fill to about 3300 tokens. Without it a passport takes about 30 s.
 REASONING_EFFORT = "none"
 
+# Greedy decoding, so the same OCR text gives the same answer. Ollama samples by
+# default, and on the synthetic documents qwen3:4b changed its answer between runs:
+# a full address one run, only its first line the next.
+TEMPERATURE = 0
+
 # The fields that make a document that type: its number or reference, plus the date
 # that defines it. If none has a value, the text is probably another document,
 # so it's flagged DOCUMENT_TYPE_MISMATCH. "Every field none" wasn't enough: given a
@@ -145,6 +150,7 @@ def extract(
             response_model=model_cls,
             max_retries=MAX_RETRIES,
             reasoning_effort=REASONING_EFFORT,
+            temperature=TEMPERATURE,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
