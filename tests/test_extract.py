@@ -162,6 +162,7 @@ def test_request_uses_settings_and_prompt(
     body = requests[0]
     assert body["model"] == "test-model"
     assert body["reasoning_effort"] == "none"  # thinking off
+    assert body["temperature"] == 0  # repeatable answers
     system, user = body["messages"][0], body["messages"][-1]
     assert system["role"] == "system"
     assert system["content"].startswith(extract_mod.SYSTEM_PROMPT)
