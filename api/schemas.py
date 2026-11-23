@@ -48,6 +48,9 @@ class FlagCode(StrEnum):
     # Set by api.extract: none of the declared type's identifying fields (its number
     # and defining date) was found, so the text may be another document.
     DOCUMENT_TYPE_MISMATCH = "DOCUMENT_TYPE_MISMATCH"
+    # Set by api.extract: some document lines read like instructions to the model,
+    # so they were withheld from it. A reviewer should look at the original.
+    PROMPT_INJECTION_SUSPECTED = "PROMPT_INJECTION_SUSPECTED"
 
 
 class StrictModel(BaseModel):

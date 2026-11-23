@@ -16,7 +16,11 @@ RUNS: list[dict[str, Any]] = json.loads(
 )
 
 # Flags api.extract sets; validating a document can't produce them.
-EXTRACT_FLAGS = {FlagCode.EXTRACTION_FAILED, FlagCode.DOCUMENT_TYPE_MISMATCH}
+EXTRACT_FLAGS = {
+    FlagCode.EXTRACTION_FAILED,
+    FlagCode.DOCUMENT_TYPE_MISMATCH,
+    FlagCode.PROMPT_INJECTION_SUSPECTED,
+}
 
 
 @pytest.fixture(autouse=True)
