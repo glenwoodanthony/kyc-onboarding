@@ -75,13 +75,28 @@ class ExtractedField[T](StrictModel):
 
 
 def parse_day_first(text: str) -> date:
-    cleaned = " ".join(text.split())
+    # "4th July, 1990" -> "4 July 1990": drop ordinal suffixes and commas.
+    cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text, flags=re.IGNORECASE)
+    cleaned = " ".join(cleaned.replace(",", " ").split())
     for fmt in DATE_FORMATS:
         try:
             return datetime.strptime(cleaned, fmt).date()
         except ValueError:
             continue
     raise ValueError(f"cannot parse {text!r} as a day-first date")
+
+
+def date_in_raw_text(raw_text: str) -> date | None:
+    """The day-first date raw_text gives, or None if it doesn't give a full one.
+
+    Accepts a leading label ("Date of birth: 04/07/1990") as well as the bare date.
+    """
+    for candidate in (raw_text, raw_text.rpartition(":")[2]):
+        try:
+            return parse_day_first(candidate)
+        except ValueError:
+            continue
+    return None
 
 
 class DateField(ExtractedField[date]):
@@ -93,6 +108,33 @@ class DateField(ExtractedField[date]):
         if isinstance(value, str):
             return parse_day_first(value)
         return value
+
+    @model_validator(mode="after")
+    def _value_follows_from_raw_text(self) -> Self:
+        # Catches a model "fixing" what the document doesn't say: expanding a
+        # two-digit year (04.07.90 -> 1990-07-04) or padding a bare year
+        # (2030 -> 2030-01-01). Applies at every confidence level. The messages are
+        # sent back to the model on retry, so they say what to do.
+        if self.value is None:
+            return self
+        if self.raw_text is None:
+            raise ValueError(
+                f"date value {self.value} has no raw_text; copy the date as printed "
+                "into raw_text, or set value to null"
+            )
+        read = date_in_raw_text(self.raw_text)
+        if read is None:
+            raise ValueError(
+                f"raw_text {self.raw_text!r} is not a full day-first date with a "
+                "four-digit year, so it can't support a value; set value to null, "
+                'confidence to "low" or "none", and explain in note'
+            )
+        if read != self.value:
+            raise ValueError(
+                f"value {self.value} does not match raw_text {self.raw_text!r}, "
+                f"which reads day-first as {read}"
+            )
+        return self
 
 
 def age_on(born: date, on: date) -> int:
