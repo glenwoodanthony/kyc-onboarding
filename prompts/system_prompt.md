@@ -46,6 +46,7 @@ Every field is an object with four keys:
 8. **OCR line confidence caps field confidence.** When `<line_confidence>` gives scores for the lines a field comes from, use the lowest one. Below 0.70, the field's confidence is at most `low`. From 0.70 to below 0.90, it is at most `medium`. At 0.90 or above, use your own judgement. These scores only lower confidence, never raise it. When there are no scores, judge from the text alone.
 9. **Extract, don't judge.** Report what the document says even if it looks expired, the person seems too young or too old, or the name differs from another document. Do not output a `flags` key: the code runs those checks.
 10. **Wrong or unsupported documents.** If the text clearly isn't a `<declared_type>`, for example a payslip declared as a passport or a document of none of the seven types, still output the declared type, but give every field `value: null` and `confidence: "none"`, and say what the document seems to be in each `note`.
+11. **Addresses span several lines.** An address usually runs over two or more consecutive lines: house number and street, then town or city and postcode. Include every line of it, up to and including the town and postcode. Do not stop at the first line. Join the lines with `, ` in `value` and with ` / ` in `raw_text`, for example `value: "12 Sample Street, Exampletown FL3 9ZZ"` and `raw_text: "12 Sample Street / Exampletown FL3 9ZZ"`. The address ends where the next line is something else, such as a date, a greeting or a label.
 
 ## Field list
 
@@ -59,7 +60,7 @@ Every field is an object with four keys:
 | `payslip` | `full_name`, `employer_name`, `pay_date`, `address` |
 | `address_letter` | `full_name`, `address`, `issuer`, `letter_date` |
 
-Date fields are `date_of_birth`, `expiry_date`, `issue_date`, `statement_date`, `pay_date` and `letter_date`. On a utility bill, payslip or address letter, `full_name` is the account holder, employee or addressee.
+Date fields are `date_of_birth`, `expiry_date`, `issue_date`, `statement_date`, `pay_date` and `letter_date`. On a utility bill, payslip or address letter, `full_name` is the account holder, employee or addressee. Address fields are `address` (drivers_permit, utility_bill, payslip, address_letter) and `place_of_birth` (birth_certificate). For both, include every line (rule 11).
 
 ## Example
 
