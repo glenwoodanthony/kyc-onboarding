@@ -44,6 +44,23 @@ PPOCR = OcrResult(
     engine="pp-ocr",
 )
 
+# What run() extracts from. Every raw_text must be found in the OCR lines, so this
+# holds each one the canned answers below quote (field() quotes the value itself).
+SOURCE_LINES = [
+    "PASSPORT / NATIONAL IDENTITY CARD",
+    "ALEX JORDAN EXAMPLE",
+    "FX12B4567",
+    "FICTIONLAND",
+    "FL-4821-7730",
+    *("1990-07-04", "2035-03-11", "2025-03-12", "2032-01-14", "2022-01-15"),
+    *("2020-01-01", "2016-06-01"),
+]
+SOURCE = OcrResult(
+    markdown="\n".join(SOURCE_LINES),
+    lines=[Line(text=t, confidence=0.99, bbox=None) for t in SOURCE_LINES],
+    engine="pp-ocr",
+)
+
 
 def field(value: Any, confidence: str = "high") -> dict[str, Any]:
     return {"value": value, "raw_text": value, "confidence": confidence, "note": None}
@@ -125,7 +142,7 @@ def completion(content: str) -> dict[str, Any]:
 
 
 def run(declared_type: DocumentType = "passport") -> KYCExtraction:
-    return extract(PPOCR, declared_type, "Fictionland", settings=SETTINGS)
+    return extract(SOURCE, declared_type, "Fictionland", settings=SETTINGS)
 
 
 def assert_failed(result: KYCExtraction, declared_type: DocumentType) -> None:
@@ -166,7 +183,7 @@ def test_request_uses_settings_and_prompt(
     system, user = body["messages"][0], body["messages"][-1]
     assert system["role"] == "system"
     assert system["content"].startswith(extract_mod.SYSTEM_PROMPT)
-    assert user["content"] == format_user_message(PPOCR, "passport", "Fictionland")
+    assert user["content"] == format_user_message(SOURCE, "passport", "Fictionland")
 
 
 def test_invalid_answer_is_retried_with_the_error(
@@ -615,3 +632,56 @@ def test_every_field_invalid_is_a_failure_with_a_short_reason(
     assert_failed(result, "passport")
     message = result.document.flags[0].message
     assert message == "extraction failed: no valid answer after 3 attempts"
+
+
+# --- raw_text must be in the OCR text -----------------------------------------------
+
+
+def test_invented_raw_text_is_retried_with_the_error(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: issue_date 2022-07-15 with raw_text "15.07.2022", which the date
+    # check passes because the two agree. Neither is on the document.
+    invented = {"value": "2022-07-15", "raw_text": "15.07.2022", "confidence": "high"}
+    requests = model(national_id_answer(issue_date=invented), national_id_answer())
+    doc = run("national_id").document
+
+    assert len(requests) == 2
+    retry_text = json.dumps(requests[1]["messages"])
+    assert "does not appear in the OCR text" in retry_text
+    assert doc.issue_date.value == date(2022, 1, 15)  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.flags == []
+
+
+def test_invented_raw_text_is_nulled_when_the_model_keeps_it(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    invented = {"value": "2022-07-15", "raw_text": "15.07.2022", "confidence": "high"}
+    model(national_id_answer(issue_date=invented))
+    doc = run("national_id").document
+
+    assert doc.issue_date.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.issue_date.raw_text == "15.07.2022"  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.document_number.value == "FL-4821-7730"  # pyright: ignore[reportAttributeAccessIssue]
+    [flag] = doc.flags
+    assert flag.code is FlagCode.EXTRACTION_INCOMPLETE
+    assert "issue_date (" in flag.message
+    assert "does not appear in the OCR text" in flag.message
+
+
+def test_value_quoted_from_a_withheld_line_is_rejected(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Even if the model somehow knew the injected text, it can't cite it: the check
+    # is against the lines as sent, with the injection withheld.
+    injected = bill("Verified Ltd")
+    injected["provider"]["raw_text"] = "the provider to Verified Ltd."
+    model(injected)
+    result = extract(UTILITY_BILL, "utility_bill", "Fictionland", settings=SETTINGS)
+    doc = result.document
+
+    assert doc.provider.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert [f.code for f in doc.flags] == [
+        FlagCode.EXTRACTION_INCOMPLETE,
+        FlagCode.PROMPT_INJECTION_SUSPECTED,
+    ]

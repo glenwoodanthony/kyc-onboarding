@@ -527,3 +527,109 @@ def test_document_flags_stay_on_the_document() -> None:
     p = packet(make_doc("passport", expiry_date="01/01/2026"), make_doc("national_id"))
     assert p.flags == []
     assert codes(p.documents[0].flags) == [FlagCode.DOCUMENT_EXPIRED]
+
+
+# --- raw_text must be in the source text --------------------------------------
+
+# The live two-digit-year national ID, as PP-OCR read it.
+NATIONAL_ID_LINES = [
+    "NATIONALIDENTITYCARD",
+    "Republic of Fictionland",
+    "Surname",
+    "EXAMPLE",
+    "Given names",
+    "ALEX JORDAN",
+    "Date of birth",
+    "04.07.90",
+    "ID No.",
+    "FL-4821-7730",
+    "Date of issue",
+    "15.01.2022",
+]
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "15.01.2022",  # exactly as printed
+        "EXAMPLE / ALEX JORDAN",  # parts from separate lines, joined by " / "
+        "Date of issue: 15.01.2022",  # label and value on consecutive lines
+        "Date of issue 15.01.2022",
+        "National Identity Card",  # OCR dropped the spaces; the model put them back
+        "alex jordan",  # case doesn't matter
+    ],
+)
+def test_raw_text_found_in_source(raw_text: str) -> None:
+    assert schemas.raw_text_in_source(raw_text, NATIONAL_ID_LINES)
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "15.07.2022",  # seen live: issue month taken from the DOB line
+        "04.07.1990",  # a two-digit year expanded
+        "EXAMPLE / ALEX JORDAN / SMITH",  # one part not in the text
+        "Date of birth 15.01.2022",  # lines that aren't next to each other
+    ],
+)
+def test_raw_text_not_in_source(raw_text: str) -> None:
+    assert not schemas.raw_text_in_source(raw_text, NATIONAL_ID_LINES)
+
+
+def national_id(**overrides: Any) -> dict[str, Any]:
+    return make_doc(
+        "national_id",
+        name="ALEX JORDAN EXAMPLE",
+        **{
+            "full_name": fld("ALEX JORDAN EXAMPLE", raw_text="EXAMPLE / ALEX JORDAN"),
+            "date_of_birth": None,
+            "expiry_date": None,
+            "document_number": "FL-4821-7730",
+            "issue_date": fld(date(2022, 1, 15), raw_text="15.01.2022"),
+            **overrides,
+        },
+    )
+
+
+def test_document_from_the_source_validates() -> None:
+    with schemas.source_lines(NATIONAL_ID_LINES):
+        doc = document_adapter.validate_python(national_id())
+    assert doc.full_name.value == "ALEX JORDAN EXAMPLE"
+
+
+def test_invented_raw_text_is_rejected_with_instructions() -> None:
+    invented = fld(date(2022, 7, 15), raw_text="15.07.2022")
+    with (
+        schemas.source_lines(NATIONAL_ID_LINES),
+        pytest.raises(ValidationError) as err,
+    ):
+        document_adapter.validate_python(national_id(issue_date=invented))
+    message = str(err.value)
+    assert "issue_date.raw_text '15.07.2022' does not appear in the OCR text" in message
+    assert "set value and raw_text to null" in message
+
+
+def test_value_without_raw_text_is_rejected() -> None:
+    no_source = {"value": "FL-4821-7730", "confidence": "high"}
+    with (
+        schemas.source_lines(NATIONAL_ID_LINES),
+        pytest.raises(
+            ValidationError, match="document_number has a value but no raw_text"
+        ),
+    ):
+        document_adapter.validate_python(national_id(document_number=no_source))
+
+
+def test_null_value_raw_text_is_not_checked() -> None:
+    # A rejected field keeps the model's raw_text for the reviewer, value null.
+    kept = {"value": None, "raw_text": "15.07.2022", "confidence": "none", "note": "x"}
+    with schemas.source_lines(NATIONAL_ID_LINES):
+        document_adapter.validate_python(national_id(issue_date=kept))
+
+
+def test_no_check_outside_source_lines() -> None:
+    # Loading a stored result has no OCR text to check against.
+    invented = fld(date(2022, 7, 15), raw_text="15.07.2022")
+    with schemas.source_lines(NATIONAL_ID_LINES):
+        pass
+    document_adapter.validate_python(national_id(issue_date=invented))
