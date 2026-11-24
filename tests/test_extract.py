@@ -685,3 +685,119 @@ def test_value_quoted_from_a_withheld_line_is_rejected(
         FlagCode.EXTRACTION_INCOMPLETE,
         FlagCode.PROMPT_INJECTION_SUSPECTED,
     ]
+
+
+# --- falling back to earlier attempts --------------------------------------------
+
+GARBLED_EXPIRY = {
+    "value": "2032-01-14",
+    "raw_text": "14.01.2 2032",
+    "confidence": "high",
+}
+INVENTED_ISSUE = {"value": "2022-07-15", "raw_text": "15.07.2022", "confidence": "high"}
+
+
+def test_field_broken_by_a_retry_comes_from_an_earlier_attempt(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: the expiry was right on the first attempt, garbled on the retries;
+    # the invented issue date stayed invented throughout.
+    model(
+        national_id_answer(issue_date=INVENTED_ISSUE),
+        national_id_answer(issue_date=INVENTED_ISSUE, expiry_date=GARBLED_EXPIRY),
+    )
+    doc = run("national_id").document
+
+    assert doc.expiry_date.value == date(2032, 1, 14)  # pyright: ignore[reportAttributeAccessIssue]
+    note = doc.expiry_date.note  # pyright: ignore[reportAttributeAccessIssue]
+    assert note is not None
+    assert note.startswith("taken from attempt 1; the latest answer's value was ")
+    assert "four-digit year" in note
+    assert doc.issue_date.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.issue_date.raw_text == "15.07.2022"  # pyright: ignore[reportAttributeAccessIssue]
+    [flag] = doc.flags
+    assert flag.code is FlagCode.EXTRACTION_INCOMPLETE
+    assert "issue_date (" in flag.message
+    assert "expiry_date" not in flag.message
+
+
+def test_latest_valid_earlier_attempt_wins(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    first = national_id_answer(issue_date=INVENTED_ISSUE)
+    second = national_id_answer(
+        issue_date=INVENTED_ISSUE,
+        document_number={**field("FL-4821-7730"), "note": "second look"},
+    )
+    third = national_id_answer(
+        issue_date=INVENTED_ISSUE, document_number=field("FL-0000-0000")
+    )
+    model(first, second, third)
+    doc = run("national_id").document
+
+    number = doc.document_number  # pyright: ignore[reportAttributeAccessIssue]
+    assert number.value == "FL-4821-7730"
+    # The model's own note is kept, then where the value came from.
+    assert number.note is not None
+    assert number.note.startswith("second look; taken from attempt 2; ")
+    assert "does not appear in the OCR text" in number.note
+
+
+def test_no_flag_when_earlier_attempts_cover_every_field(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Every attempt is invalid somewhere (or Instructor would accept it), but each
+    # field is valid in at least one.
+    model(
+        national_id_answer(issue_date=INVENTED_ISSUE),
+        national_id_answer(expiry_date=GARBLED_EXPIRY),
+    )
+    doc = run("national_id").document
+
+    assert doc.issue_date.value == date(2022, 1, 15)  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.expiry_date.value == date(2032, 1, 14)  # pyright: ignore[reportAttributeAccessIssue]
+    assert "taken from attempt 1" in doc.expiry_date.note  # pyright: ignore[reportAttributeAccessIssue, reportOperatorIssue]
+    assert doc.flags == []
+
+
+def test_valid_null_in_the_last_answer_is_kept(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # The model may null a field on reflection; an earlier value doesn't override it.
+    model(
+        national_id_answer(issue_date=INVENTED_ISSUE),
+        national_id_answer(issue_date=INVENTED_ISSUE, expiry_date=EMPTY),
+    )
+    doc = run("national_id").document
+
+    assert doc.expiry_date.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.expiry_date.note is None  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_earlier_value_must_pass_the_document_checks(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Age 10 is outside 18-110 in every attempt, so no attempt supplies the DOB.
+    child = field("2016-06-01")
+    model(
+        passport(date_of_birth=child),
+        passport(date_of_birth={**child, "raw_text": "01.06.2 2016"}),
+    )
+    doc = run().document
+
+    assert doc.date_of_birth.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert "four-digit year" in doc.date_of_birth.note  # pyright: ignore[reportAttributeAccessIssue, reportOperatorIssue]
+    assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]
+
+
+def test_attempt_without_json_is_skipped(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # The later attempts gave no JSON, so the first is the latest answer to use.
+    model(national_id_answer(issue_date=INVENTED_ISSUE), "not json at all")
+    doc = run("national_id").document
+
+    assert doc.expiry_date.value == date(2032, 1, 14)  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.expiry_date.note is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.issue_date.value is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]

@@ -290,17 +290,24 @@ def _extract(
             logger.warning("%s %s", declared_type, reason)
             return _failed(declared_type, country, reason, injection)
         data, rejected = salvaged
-        logger.warning(
-            "%s extraction incomplete, rejected: %s", declared_type, ", ".join(rejected)
-        )
-        incomplete = Flag(
-            code=FlagCode.EXTRACTION_INCOMPLETE,
-            message=f"after {MAX_RETRIES + 1} attempts these fields were still "
-            "invalid and were set to null: "
-            + "; ".join(f"{name} ({why})" for name, why in rejected.items()),
-        )
         doc = model_cls.model_validate(data)
-        flags = [incomplete]
+        flags = []
+        # Nothing rejected means earlier attempts covered every field the last one
+        # got wrong; each such field's note says so.
+        if rejected:
+            logger.warning(
+                "%s extraction incomplete, rejected: %s",
+                declared_type,
+                ", ".join(rejected),
+            )
+            flags.append(
+                Flag(
+                    code=FlagCode.EXTRACTION_INCOMPLETE,
+                    message=f"after {MAX_RETRIES + 1} attempts these fields were "
+                    "still invalid and were set to null: "
+                    + "; ".join(f"{name} ({why})" for name, why in rejected.items()),
+                )
+            )
     else:
         # Rebuild from the fields alone, so the only flags are the ones code sets.
         data = doc.model_dump(exclude={"flags"})
@@ -315,7 +322,12 @@ def _extract(
 # Seen live: on a national ID with a two-digit-year DOB, qwen3:4b expanded the
 # year twice (rejected), then fixed it but garbled the issue date's raw_text
 # (rejected). Throwing the whole document away lost a correct name, number and
-# expiry. So on final failure the last answer is kept field by field.
+# expiry. So on final failure the answers are kept field by field.
+#
+# Retries can also break a field that was right before: live, on the same ID, the
+# expiry was valid ("14.01.2032") on the first attempt and garbled ("14.01.2 2032")
+# on the last. So a field the last attempt got wrong falls back to the latest
+# earlier attempt where it's valid.
 
 MAX_REASON_CHARS = 200
 
@@ -323,37 +335,50 @@ MAX_REASON_CHARS = 200
 def _salvage(
     exc: Exception, model_cls: type[BaseDocument]
 ) -> tuple[dict[str, Any], dict[str, str]] | None:
-    """The last answer's valid fields, plus {rejected field: why}.
+    """The valid fields from the model's answers, plus {rejected field: why}.
 
-    None when there's nothing to keep: no answer (Ollama down), an answer that isn't
-    a JSON object, or every field rejected.
+    Each field comes from the last answer if it's valid there, otherwise from the
+    latest earlier answer where it is; its note then says which attempt. A field
+    the last answer validly left null stays null. A field valid in no answer is
+    rejected, with the last answer's reason and raw_text.
+
+    None when there's nothing to keep: no answer (Ollama down), no answer that is a
+    JSON object, or every field rejected.
 
     Fields are added to an all-null document one at a time and kept only if the
     document still validates, so document-level checks (the DOB age range) reject
     the field that breaks them.
     """
-    answer = _last_answer(exc)
-    if answer is None:
+    answers = _answers(exc)
+    if not answers:
         return None
+    last_number, last = answers[-1]
 
     data: dict[str, Any] = {name: _null_field() for name in field_names(model_cls)}
     rejected: dict[str, str] = {}
     for name in field_names(model_cls):
-        candidate = answer.get(name)
-        if candidate is None:
-            rejected[name] = "missing from the model's answer"
-            continue
-        try:
-            model_cls.model_validate({**data, name: candidate})
-        except ValidationError as err:
-            rejected[name] = _clip(err.errors()[0]["msg"])
-            continue
-        data[name] = candidate
+        why = "missing from the model's answer"
+        for number, answer in reversed(answers):
+            candidate = answer.get(name)
+            if candidate is None:
+                continue
+            if number != last_number and isinstance(candidate, dict):
+                candidate = _from_earlier(candidate, number, why)
+            try:
+                model_cls.model_validate({**data, name: candidate})
+            except ValidationError as err:
+                if number == last_number:
+                    why = _clip(err.errors()[0]["msg"])
+                continue
+            data[name] = candidate
+            break
+        else:
+            rejected[name] = why
 
     if len(rejected) == len(data):
         return None
     for name, why in rejected.items():
-        raw = answer.get(name)
+        raw = last.get(name)
         raw_text = raw.get("raw_text") if isinstance(raw, dict) else None
         data[name] = _null_field(
             raw_text if isinstance(raw_text, str) else None,
@@ -362,9 +387,35 @@ def _salvage(
     return data, rejected
 
 
-def _last_answer(exc: Exception) -> dict[str, Any] | None:
-    """The JSON object in the model's last answer, if there is one."""
-    completion = getattr(exc, "last_completion", None)
+def _from_earlier(candidate: dict[str, Any], number: int, why: str) -> dict[str, Any]:
+    """An earlier attempt's field, its note saying where it came from and why."""
+    origin = (
+        f"taken from attempt {number}; the latest answer's value was rejected: {why}"
+    )
+    note = candidate.get("note")
+    return {**candidate, "note": f"{note}; {origin}" if note else origin}
+
+
+def _answers(exc: Exception) -> list[tuple[int, dict[str, Any]]]:
+    """(attempt number, JSON object) for each attempt that gave one, oldest first.
+
+    Instructor's retry exception keeps every attempt in failed_attempts; other
+    failures (cut-off output) have only last_completion.
+    """
+    attempts = getattr(exc, "failed_attempts", None) or []
+    completions = [getattr(a, "completion", None) for a in attempts]
+    if not completions:
+        completions = [getattr(exc, "last_completion", None)]
+    answers = []
+    for number, completion in enumerate(completions, start=1):
+        answer = _answer(completion)
+        if answer is not None:
+            answers.append((number, answer))
+    return answers
+
+
+def _answer(completion: Any) -> dict[str, Any] | None:
+    """The JSON object in one completion, if there is one."""
     try:
         content = completion.choices[0].message.content  # pyright: ignore[reportOptionalMemberAccess]
     except (AttributeError, IndexError, TypeError):
