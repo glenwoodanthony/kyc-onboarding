@@ -10,9 +10,12 @@ documents) and never stop the data from loading.
 """
 
 import re
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from enum import StrEnum
-from itertools import combinations
+from itertools import combinations, pairwise
 from typing import Annotated, Any, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -150,10 +153,87 @@ def age_on(born: date, on: date) -> int:
 # --- documents -------------------------------------------------------------
 
 
+# The source text a document is being extracted from: the OCR lines exactly as the
+# model saw them. While set (by `source_lines`), every field's raw_text must be found
+# in these lines. Unset, as when loading stored results, nothing is checked.
+#
+# A ContextVar rather than Pydantic's validation context, because the check has to
+# run inside Instructor's retry loop, and Instructor's `context=` also renders the
+# messages as Jinja templates. The OCR text is written by the customer, so it must
+# never be rendered.
+_SOURCE_LINES: ContextVar[tuple[str, ...] | None] = ContextVar(
+    "source_lines", default=None
+)
+
+# raw_text joins the lines of a multi-line value with " / " (prompt rule 4).
+_RAW_TEXT_JOIN = re.compile(r"\s+/\s+")
+
+
+@contextmanager
+def source_lines(lines: Iterable[str]) -> Iterator[None]:
+    """Within this block, every raw_text must appear in `lines`."""
+    token = _SOURCE_LINES.set(tuple(lines))
+    try:
+        yield
+    finally:
+        _SOURCE_LINES.reset(token)
+
+
+def _letters_and_digits(text: str) -> str:
+    # OCR drops and adds spaces (Name:ALEXJORDANEXAMPLE), and the model may repair
+    # them, so only letters and digits are compared, without case.
+    return "".join(ch for ch in text.casefold() if ch.isalnum())
+
+
+def raw_text_in_source(raw_text: str, lines: Sequence[str]) -> bool:
+    """Whether every " / "-separated part of raw_text is in one line, or two in a row.
+
+    Two in a row allows a label and its value on consecutive lines ("Date of birth"
+    then "04.07.1990") quoted as one. Letters and digits must match exactly, so a
+    date that is not on the document ("15.07.2022" for "15.01.2022") is not found.
+    """
+    normalised = [_letters_and_digits(line) for line in lines]
+    windows = normalised + [a + b for a, b in pairwise(normalised)]
+    for part in _RAW_TEXT_JOIN.split(raw_text):
+        needle = _letters_and_digits(part)
+        if needle and not any(needle in window for window in windows):
+            return False
+    return True
+
+
 class BaseDocument(StrictModel):
     # Every document type names its holder `full_name` so packet checks are uniform.
     full_name: ExtractedField[str]
     flags: list[Flag] = []
+
+    @model_validator(mode="after")
+    def _raw_text_is_in_source(self) -> Self:
+        # Catches a value invented together with a raw_text that agrees with it, which
+        # the date check can't: live, qwen3:4b gave issue_date 2022-07-15 with
+        # raw_text "15.07.2022" for a card printed 15.01.2022. The message goes back
+        # to the model on retry.
+        lines = _SOURCE_LINES.get()
+        if lines is None:
+            return self
+        problems = []
+        for name in type(self).model_fields:
+            field = getattr(self, name)
+            if not isinstance(field, ExtractedField) or field.value is None:
+                continue
+            if field.raw_text is None:
+                problems.append(
+                    f"{name} has a value but no raw_text; copy the text it comes "
+                    "from into raw_text, or set value to null"
+                )
+            elif not raw_text_in_source(field.raw_text, lines):
+                problems.append(
+                    f"{name}.raw_text {field.raw_text!r} does not appear in the OCR "
+                    "text; copy raw_text exactly from the document's lines and take "
+                    "value from that same text, or set value and raw_text to null"
+                )
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
 
 class HasDOB(BaseDocument):

@@ -44,6 +44,7 @@ from api.schemas import (
     FlagCode,
     KYCExtraction,
     field_names,
+    source_lines,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,19 @@ def _injection_flag(texts: list[str]) -> Flag | None:
     )
 
 
+def _lines_as_sent(ocr: OcrResult) -> list[str]:
+    """The OCR lines the model sees, with instruction-like lines replaced by WITHHELD.
+
+    Each field's raw_text is checked against these, so a value quoted from a
+    withheld line is rejected too.
+    """
+    texts = _ocr_lines(ocr)
+    withheld = set(instruction_lines(texts))
+    return [
+        WITHHELD if n in withheld else text for n, text in enumerate(texts, start=1)
+    ]
+
+
 def format_user_message(
     ocr: OcrResult, declared_type: DocumentType, country: str
 ) -> str:
@@ -210,11 +224,8 @@ def format_user_message(
 
     Lines that read like instructions to the model are replaced by WITHHELD.
     """
-    texts = _ocr_lines(ocr)
-    withheld = set(instruction_lines(texts))
     numbered = "\n".join(
-        f"L{n}: {WITHHELD if n in withheld else text}"
-        for n, text in enumerate(texts, start=1)
+        f"L{n}: {text}" for n, text in enumerate(_lines_as_sent(ocr), start=1)
     )
     parts = [
         f"<declared_type>{declared_type}</declared_type>",
@@ -239,8 +250,20 @@ def extract(
     *,
     settings: Settings | None = None,
 ) -> KYCExtraction:
-    """Extract one document of `declared_type` from OCR text. Doesn't raise on model failure."""
+    """Extract one document of `declared_type` from OCR text. Doesn't raise on model failure.
+
+    Every value's raw_text must be found in the lines the model was given (see
+    schemas.source_lines). The check runs inside Instructor's retry loop, so a miss
+    goes back to the model, and again in _salvage.
+    """
     settings = settings or get_settings()
+    with source_lines(_lines_as_sent(ocr)):
+        return _extract(ocr, declared_type, country, settings)
+
+
+def _extract(
+    ocr: OcrResult, declared_type: DocumentType, country: str, settings: Settings
+) -> KYCExtraction:
     model_cls = DOCUMENT_MODELS[declared_type]
     injection = _injection_flag(_ocr_lines(ocr))
     client = instructor.from_openai(_openai_client(settings), mode=instructor.Mode.JSON)
