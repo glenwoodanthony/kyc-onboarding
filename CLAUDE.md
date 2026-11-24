@@ -72,6 +72,18 @@ This is the system prompt for the extraction model. The model receives OCR text,
 - Exit codes: 0 when a document was extracted (including `EXTRACTION_INCOMPLETE`), 1 for `EXTRACTION_FAILED`, 2 when the image is missing.
 - The script puts the repo root on `sys.path` itself, because running a file puts only `scripts/` there.
 
+## Running the synthetic cases (`scripts/run_synthetic.py`)
+
+`uv run python scripts/run_synthetic.py [--gpu] [--only TEXT] [-o DIR]` runs every case in `synthetic/ids/expected.json` through OCR and extraction, then compares each expected value and the flags.
+
+- **Output:** one PASS/FAIL line per case, with any wrong fields (value, confidence and note) underneath, then a total.
+- **Comparison is by meaning:** dates as dates; text ignoring case, with `, ` and ` / ` treated alike and spacing collapsed. A missing space inside a word (`ALEXJORDANEXAMPLE`) still fails. Flags must match exactly, as a set of codes.
+- **Engine:** PP-OCR on CPU by default; `--gpu` tries VL first.
+- **Filtering:** `--only` keeps the cases whose name contains TEXT. Names are `NN_<image>_as_<declared type>`, because the payslip image is run twice.
+- **Saved output:** `-o DIR` writes each case's extraction JSON and numbered OCR text, plus `summary.json`.
+- **Speed and exit codes:** about 1 minute a case, so all 11 take about 10 minutes. Exit 0 when every case matches, 1 when any doesn't, 2 when the answer key or an image is missing.
+- **Tests:** `tests/test_run_synthetic_script.py` stubs OCR and extraction.
+
 ## OCR (`api/ocr.py`)
 
 `ocr_image(path, *, use_gpu=True) -> OcrResult(markdown, lines, engine)`. Each `Line` has `text`, `confidence` (0–1 or None) and `bbox` (x0, y0, x1, y1). `use_gpu=False` skips VL and goes straight to PP-OCR.
