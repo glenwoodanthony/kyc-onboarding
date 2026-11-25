@@ -634,6 +634,57 @@ def test_no_check_outside_source_lines() -> None:
     document_adapter.validate_python(national_id(issue_date=invented))
 
 
+@pytest.mark.parametrize(
+    ("value", "lines"),
+    [
+        ("FL-4821-7730", ["ID No.", "FL-4821-7730"]),
+        ("FL-4821-7730", ["ID No.: FL-4821-7730"]),  # a label on the same line
+        ("FX7654321", ["FX 765 4321"]),  # OCR spacing is ignored
+        ("FX 765 4321", ["FX7654321"]),
+        ("B-13909/1968", ["B-13909/", "1968"]),  # wrapped over two lines
+    ],
+)
+def test_identifier_found_in_source(value: str, lines: list[str]) -> None:
+    assert schemas.identifier_in_source(value, lines)
+
+
+@pytest.mark.parametrize(
+    ("value", "lines"),
+    [
+        ("B-13909/1.968", ["B-13909/1968"]),  # seen live: a "." added
+        ("FL48217730", ["FL-4821-7730"]),  # punctuation dropped
+        ("FL-4821/7730", ["FL-4821-7730"]),  # punctuation changed
+        ("B-13909/1968", ["B-13909/", "Sex", "1968"]),  # lines not next to each other
+    ],
+)
+def test_identifier_not_in_source(value: str, lines: list[str]) -> None:
+    assert not schemas.identifier_in_source(value, lines)
+
+
+def test_number_with_added_punctuation_is_rejected_with_instructions() -> None:
+    # value and raw_text agree, and raw_text matches the source on letters and
+    # digits, so only the punctuation-preserving check catches it.
+    added = fld("FL-4821-77.30", raw_text="FL-4821-77.30")
+    with (
+        schemas.source_lines(NATIONAL_ID_LINES),
+        pytest.raises(ValidationError) as err,
+    ):
+        document_adapter.validate_python(national_id(document_number=added))
+    message = str(err.value)
+    assert "document_number 'FL-4821-77.30' does not appear in the OCR text" in message
+    assert "no added, removed or changed punctuation" in message
+
+
+def test_other_text_fields_may_repair_punctuation() -> None:
+    # Only numbers keep their punctuation; names may be repaired ("ALEX JORDAN").
+    with schemas.source_lines(NATIONAL_ID_LINES):
+        document_adapter.validate_python(
+            national_id(
+                full_name=fld("Alex Jordan Example", raw_text="EXAMPLE / ALEX-JORDAN")
+            )
+        )
+
+
 # --- identifiers must be copied exactly from raw_text ---------------------------------
 
 
