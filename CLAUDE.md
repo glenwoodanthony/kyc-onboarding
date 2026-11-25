@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `scripts/` holds developer tools that aren't part of the app.
+This is an early-stage KYC (know-your-customer) onboarding project. So far it has the OCR step in `api/ocr.py`, the extraction schemas in `api/schemas.py`, the extraction model's system prompt in `prompts/system_prompt.md` and the extraction call in `api/extract.py`, each with its own tests. `scripts/` holds developer tools that aren't part of the app. The project skill `.claude/skills/synthetic-docs/` generates a second, Caribbean-style test set.
 
 ## Synthetic documents (`synthetic/ids/`)
 
@@ -17,6 +17,16 @@ This is an early-stage KYC (know-your-customer) onboarding project. So far it ha
 - **Allowed flags:** only the two-digit-year ID has one, `EXTRACTION_INCOMPLETE`. qwen3:4b often expands `04.07.90` on every attempt; the date check rejects it and the salvage step nulls it, which is the right value but adds the flag. When the model nulls it itself, there's no flag. Which happens depends on the retry history, which small changes to the request can shift; both outcomes have been seen live.
 - **`tests/test_synthetic_ids.py`** checks that every image exists, that the expected values validate against `api/schemas.py` with exactly the expected flags, and that allowed flags are ones only `api/extract.py` sets. It doesn't run OCR or the model. Change the generator and the key together.
 - `synthetic/ocr_sample.png` (from `make_ocr_sample.py`) is separate. The `ocr` tests use it, so leave it alone. `synthetic/` holds the generated test image. The folders `capture/` and `reviewer/` are still empty placeholders. Don't assume an architecture beyond these directory names. Ask the user before deciding what goes where, and update this file as real modules appear.
+
+## Caribbean-style test set (`.claude/skills/synthetic-docs/`)
+
+The `synthetic-docs` skill (see its `SKILL.md`) generates seven fictional documents for one applicant in the Commonwealth of Exampla, a fictional island: a national ID, typed and handwritten birth certificates, a utility bill, a bill in a relative's name, a Justice of the Peace address letter and a payslip.
+
+- **Command:** `uv run python .claude/skills/synthetic-docs/scripts/generate.py [--seed N] [--mismatch] [-o DIR]`. It uses Faker (a dev dependency) and Pillow; the handwriting font is the bundled Caveat (SIL OFL).
+- **Output:** `synthetic/caribbean/` and, with `--mismatch`, `synthetic/caribbean_mismatch/`, where the birth certificates carry a different surname. Both are committed and deterministic. Every image carries a "SPECIMEN - FICTIONAL" watermark.
+- **`answers.json`:** the same format as `expected.json`, plus `matches_applicant`, so `scripts/run_synthetic.py --answer-key synthetic/caribbean/answers.json` scores it.
+- **Tests:** `tests/test_synthetic_docs.py` loads the script from its path and checks the answer key against `api/schemas.py`, `NAME_MISMATCH` against `matches_applicant`, determinism, the watermark, and that the committed sets match a fresh generation.
+- **Pyright never checks `generate.py`:** it skips dot-folders, even with `include` set or the file named on the command line. Check a copy outside `.claude/` instead.
 
 ## Extraction schemas (`api/schemas.py`)
 
@@ -84,6 +94,7 @@ This is the system prompt for the extraction model. The model receives OCR text,
 - **Output:** one PASS/FAIL line per case, with any wrong fields (value, confidence and note) underneath, then a total.
 - **Comparison is by meaning:** dates as dates; text ignoring case, with `, ` and ` / ` treated alike and spacing collapsed. A missing space inside a word (`ALEXJORDANEXAMPLE`) still fails. Flags are compared as a set of codes: every expected flag must be there, and the only others allowed are the case's `allowed_flags`.
 - **Engine:** PP-OCR on CPU by default; `--gpu` tries VL first.
+- **Other answer keys:** `--answer-key FILE` scores another key in the same format, such as `synthetic/caribbean/answers.json`.
 - **Filtering:** `--only` keeps the cases whose name contains TEXT. Names are `NN_<image>_as_<declared type>`, because the payslip image is run twice.
 - **Saved output:** `-o DIR` writes each case's extraction JSON and numbered OCR text, plus `summary.json`.
 - **Speed and exit codes:** about 1 minute a case, so all 11 take about 10 minutes. Exit 0 when every case matches, 1 when any doesn't, 2 when the answer key or an image is missing.
