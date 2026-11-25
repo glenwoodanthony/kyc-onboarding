@@ -35,6 +35,7 @@ CASES = [
             "address": "12 Sample Street, Exampletown FL3 9ZZ",
         },
         "flags": [],
+        "allowed_flags": ["EXTRACTION_INCOMPLETE"],
     },
     {
         "image": "synthetic/ids/payslip.png",
@@ -43,6 +44,7 @@ CASES = [
         "probes": "wrong type",
         "expected": {"full_name": None, "passport_number": None},
         "flags": ["DOCUMENT_TYPE_MISMATCH"],
+        "allowed_flags": [],
     },
 ]
 
@@ -198,6 +200,50 @@ def test_missing_flag_fails(
     out = capsys.readouterr().out
     assert "FAIL  01_payslip_as_passport: 2/2 fields, flags wrong" in out
     assert "flags: got [], expected ['DOCUMENT_TYPE_MISMATCH']" in out
+
+
+INCOMPLETE = {"code": "EXTRACTION_INCOMPLETE", "message": "address rejected"}
+
+
+def test_allowed_flag_passes(
+    calls: dict[str, Any], answer_key: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls["results"]["payslip"] = payslip(flags=[INCOMPLETE])
+
+    assert run(answer_key) == 0
+    assert (
+        "PASS  00_payslip_as_payslip: 4/4 fields, flags ok" in capsys.readouterr().out
+    )
+
+
+def test_flag_neither_expected_nor_allowed_fails(
+    calls: dict[str, Any], answer_key: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    extra = mismatch()
+    extra.document.flags.append(schemas.Flag.model_validate(INCOMPLETE))
+    calls["results"]["passport"] = extra
+
+    assert run(answer_key) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  01_payslip_as_passport: 2/2 fields, flags wrong" in out
+    assert (
+        "flags: got ['DOCUMENT_TYPE_MISMATCH', 'EXTRACTION_INCOMPLETE'], "
+        "expected ['DOCUMENT_TYPE_MISMATCH']" in out
+    )
+
+
+def test_allowed_flags_are_shown_when_flags_are_wrong(
+    calls: dict[str, Any], answer_key: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls["results"]["payslip"] = payslip(
+        flags=[{"code": "DOCUMENT_TYPE_MISMATCH", "message": "no employer_name"}]
+    )
+
+    assert run(answer_key) == 1
+    assert (
+        "flags: got ['DOCUMENT_TYPE_MISMATCH'], expected [], "
+        "allowed ['EXTRACTION_INCOMPLETE']" in capsys.readouterr().out
+    )
 
 
 def test_only_filters_cases(

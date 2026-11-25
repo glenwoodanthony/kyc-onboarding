@@ -801,3 +801,43 @@ def test_attempt_without_json_is_skipped(
     assert doc.expiry_date.note is None  # pyright: ignore[reportAttributeAccessIssue]
     assert doc.issue_date.value is None  # pyright: ignore[reportAttributeAccessIssue]
     assert [f.code for f in doc.flags] == [FlagCode.EXTRACTION_INCOMPLETE]
+
+
+# --- identifiers must be copied exactly ------------------------------------------
+
+CORRUPTED_NUMBER = {
+    "value": "FL-4821-773:0",
+    "raw_text": "FL-4821-7730",
+    "confidence": "high",
+    "note": None,
+}
+
+
+def test_corrupted_number_is_retried_with_the_error(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: the value had a colon added; raw_text was right, so the raw_text
+    # check (letters and digits only) passed it.
+    requests = model(
+        national_id_answer(document_number=CORRUPTED_NUMBER), national_id_answer()
+    )
+    doc = run("national_id").document
+
+    assert len(requests) == 2
+    assert "copy the number into value exactly" in json.dumps(requests[1]["messages"])
+    assert doc.document_number.value == "FL-4821-7730"  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.flags == []
+
+
+def test_number_still_corrupted_is_nulled(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    model(national_id_answer(document_number=CORRUPTED_NUMBER))
+    doc = run("national_id").document
+
+    number = doc.document_number  # pyright: ignore[reportAttributeAccessIssue]
+    assert (number.value, number.raw_text) == (None, "FL-4821-7730")
+    assert doc.date_of_birth.value == date(1990, 7, 4)  # pyright: ignore[reportAttributeAccessIssue]
+    [flag] = doc.flags
+    assert flag.code is FlagCode.EXTRACTION_INCOMPLETE
+    assert "document_number (" in flag.message

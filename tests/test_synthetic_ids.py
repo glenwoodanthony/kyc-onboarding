@@ -55,3 +55,11 @@ def test_expected_values_validate_with_the_expected_flags(run: dict[str, Any]) -
     )
     expected = {FlagCode(code) for code in run["flags"]} - EXTRACT_FLAGS
     assert {f.code for f in doc.flags} == expected
+
+
+@pytest.mark.parametrize("run", RUNS, ids=run_id)
+def test_allowed_flags_are_extract_flags_not_also_expected(run: dict[str, Any]) -> None:
+    # Validation always produces its flags, so only api.extract's can be optional.
+    allowed = {FlagCode(code) for code in run["allowed_flags"]}
+    assert allowed <= EXTRACT_FLAGS
+    assert not allowed & {FlagCode(code) for code in run["flags"]}
