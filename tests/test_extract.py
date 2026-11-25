@@ -841,3 +841,20 @@ def test_number_still_corrupted_is_nulled(
     [flag] = doc.flags
     assert flag.code is FlagCode.EXTRACTION_INCOMPLETE
     assert "document_number (" in flag.message
+
+
+def test_number_with_punctuation_added_to_value_and_raw_text_is_retried(
+    model: Callable[..., list[dict[str, Any]]],
+) -> None:
+    # Seen live: "B-13909/1.968" in both value and raw_text for OCR "B-13909/1968".
+    # value matches raw_text, and raw_text matches the source on letters and digits.
+    added = {**CORRUPTED_NUMBER, "value": "FL-4821-77.30", "raw_text": "FL-4821-77.30"}
+    requests = model(national_id_answer(document_number=added), national_id_answer())
+    doc = run("national_id").document
+
+    assert len(requests) == 2
+    assert "no added, removed or changed punctuation" in json.dumps(
+        requests[1]["messages"]
+    )
+    assert doc.document_number.value == "FL-4821-7730"  # pyright: ignore[reportAttributeAccessIssue]
+    assert doc.flags == []

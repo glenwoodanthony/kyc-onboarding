@@ -244,6 +244,19 @@ def raw_text_in_source(raw_text: str, lines: Sequence[str]) -> bool:
     return True
 
 
+def identifier_in_source(value: str, lines: Sequence[str]) -> bool:
+    """Whether a number is in one line, or two in a row, with its punctuation.
+
+    Only whitespace is ignored, so OCR's dropped or added spaces don't matter, but
+    an added, removed or changed "-", "/" or "." does. raw_text_in_source can't
+    catch that: it compares only letters and digits.
+    """
+    needle = _without_whitespace(value)
+    stripped = [_without_whitespace(line) for line in lines]
+    windows = stripped + [a + b for a, b in pairwise(stripped)]
+    return any(needle in window for window in windows)
+
+
 class BaseDocument(StrictModel):
     # Every document type names its holder `full_name` so packet checks are uniform.
     full_name: ExtractedField[str]
@@ -259,10 +272,11 @@ class BaseDocument(StrictModel):
         if lines is None:
             return self
         problems = []
-        for name in type(self).model_fields:
+        for name, info in type(self).model_fields.items():
             field = getattr(self, name)
             if not isinstance(field, ExtractedField) or field.value is None:
                 continue
+            is_number = IDENTIFIER_CHECK in info.metadata
             if field.raw_text is None:
                 problems.append(
                     f"{name} has a value but no raw_text; copy the text it comes "
@@ -273,6 +287,16 @@ class BaseDocument(StrictModel):
                     f"{name}.raw_text {field.raw_text!r} does not appear in the OCR "
                     "text; copy raw_text exactly from the document's lines and take "
                     "value from that same text, or set value and raw_text to null"
+                )
+            elif is_number and not identifier_in_source(str(field.value), lines):
+                # Live, qwen3:4b gave "B-13909/1.968" in both value and raw_text for
+                # a certificate OCR read as "B-13909/1968". The value matches its
+                # raw_text, and the raw_text matches the source on letters and digits.
+                problems.append(
+                    f"{name} {field.value!r} does not appear in the OCR text with "
+                    "those characters; copy the number exactly as the OCR text shows "
+                    "it, with no added, removed or changed punctuation, or set value "
+                    "and raw_text to null"
                 )
         if problems:
             raise ValueError("; ".join(problems))
