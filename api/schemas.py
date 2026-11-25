@@ -18,7 +18,14 @@ from enum import StrEnum
 from itertools import combinations, pairwise
 from typing import Annotated, Any, Literal, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from rapidfuzz import fuzz
 
 NAME_MATCH_THRESHOLD = 85
@@ -144,6 +151,42 @@ class DateField(ExtractedField[date]):
                 f"which reads day-first as {read}"
             )
         return self
+
+
+def _without_whitespace(text: str) -> str:
+    return "".join(text.split())
+
+
+def _value_is_in_raw_text(field: ExtractedField[str]) -> ExtractedField[str]:
+    # A number must be copied, not retyped: its characters must appear, in order
+    # and unchanged, in raw_text. Whitespace is ignored, so "FX 765 4321" can give
+    # "FX7654321", and a leading label is allowed. Applies at every confidence
+    # level. Live, qwen3:4b gave "FL-4821-773:0" for raw_text "FL-4821-7730", which
+    # the raw_text-in-source check can't catch: it compares only letters and digits.
+    if field.value is None:
+        return field
+    if field.raw_text is None:
+        raise ValueError(
+            f"number {field.value!r} has no raw_text; copy the number as printed "
+            "into raw_text, or set value to null"
+        )
+    if _without_whitespace(field.value) not in _without_whitespace(field.raw_text):
+        raise ValueError(
+            f"value {field.value!r} is not in raw_text {field.raw_text!r}; copy "
+            "the number into value exactly as it appears in raw_text, with no "
+            "added, removed or changed characters, or set value to null"
+        )
+    return field
+
+
+IDENTIFIER_CHECK = AfterValidator(_value_is_in_raw_text)
+
+# A document, permit, passport or registration number. It's an Annotated
+# ExtractedField[str], not a subclass, so the JSON schema sent to the model is
+# unchanged: a subclass adds its own $defs entry, about 150 tokens on a request
+# already at Ollama's default 4,096-token context. Live, that extra length changed
+# qwen3:4b's answers and sent it into a repetition loop that Ollama aborted.
+IdentifierField = Annotated[ExtractedField[str], IDENTIFIER_CHECK]
 
 
 def age_on(born: date, on: date) -> int:
@@ -272,27 +315,27 @@ class HasExpiry(BaseDocument):
 
 class NationalID(HasDOB, HasExpiry):
     document_type: Literal["national_id"] = "national_id"
-    document_number: ExtractedField[str]
+    document_number: IdentifierField
     issue_date: DateField
 
 
 class DriversPermit(HasDOB, HasExpiry):
     document_type: Literal["drivers_permit"] = "drivers_permit"
-    permit_number: ExtractedField[str]
+    permit_number: IdentifierField
     issue_date: DateField
     address: ExtractedField[str]
 
 
 class Passport(HasDOB, HasExpiry):
     document_type: Literal["passport"] = "passport"
-    passport_number: ExtractedField[str]
+    passport_number: IdentifierField
     nationality: ExtractedField[str]
     issue_date: DateField
 
 
 class BirthCertificate(HasDOB):
     document_type: Literal["birth_certificate"] = "birth_certificate"
-    registration_number: ExtractedField[str]
+    registration_number: IdentifierField
     place_of_birth: ExtractedField[str]
 
 

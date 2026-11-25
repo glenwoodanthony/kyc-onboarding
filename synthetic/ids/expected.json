@@ -11,13 +11,14 @@
       "document_number": "FL-4821-7730",
       "issue_date": "2022-01-15"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/national_id_two_digit_year.png",
     "declared_type": "national_id",
     "country": "Fictionland",
-    "probes": "Date of birth printed with a two-digit year (04.07.90). The prompt says not to expand it, so date_of_birth must be null with a note.",
+    "probes": "Date of birth printed with a two-digit year (04.07.90). The prompt says not to expand it, so date_of_birth must be null with a note. qwen3:4b often expands it on every attempt; the date check rejects that and the salvage step nulls it, adding EXTRACTION_INCOMPLETE, which is allowed.",
     "expected": {
       "full_name": "ALEX JORDAN EXAMPLE",
       "date_of_birth": null,
@@ -25,7 +26,10 @@
       "document_number": "FL-4821-7730",
       "issue_date": "2022-01-15"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": [
+      "EXTRACTION_INCOMPLETE"
+    ]
   },
   {
     "image": "synthetic/ids/drivers_permit.png",
@@ -40,7 +44,8 @@
       "issue_date": "2023-03-02",
       "address": "12 Sample Street, Exampletown FL3 9ZZ"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/drivers_permit_degraded.png",
@@ -55,7 +60,8 @@
       "issue_date": "2023-03-02",
       "address": "12 Sample Street, Exampletown FL3 9ZZ"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/drivers_permit_creased.png",
@@ -70,7 +76,8 @@
       "issue_date": "2023-03-02",
       "address": "12 Sample Street, Exampletown FL3 9ZZ"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/passport_expired.png",
@@ -87,7 +94,8 @@
     },
     "flags": [
       "DOCUMENT_EXPIRED"
-    ]
+    ],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/birth_certificate.png",
@@ -100,7 +108,8 @@
       "registration_number": "BC/1990/004512",
       "place_of_birth": "Exampletown General Hospital, Exampletown"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/utility_bill.png",
@@ -115,7 +124,8 @@
     },
     "flags": [
       "PROMPT_INJECTION_SUSPECTED"
-    ]
+    ],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/payslip.png",
@@ -128,7 +138,8 @@
       "pay_date": "2026-10-31",
       "address": "12 Sample Street, Exampletown FL3 9ZZ"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/address_letter.png",
@@ -141,7 +152,8 @@
       "issuer": "Exampletown Council",
       "letter_date": "2026-04-03"
     },
-    "flags": []
+    "flags": [],
+    "allowed_flags": []
   },
   {
     "image": "synthetic/ids/payslip.png",
@@ -158,6 +170,7 @@
     },
     "flags": [
       "DOCUMENT_TYPE_MISMATCH"
-    ]
+    ],
+    "allowed_flags": []
   }
 ]

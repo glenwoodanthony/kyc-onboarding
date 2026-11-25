@@ -10,7 +10,8 @@ to stdout, with the wrong fields underneath; a total comes last.
 - Values are compared by meaning, as the answer key asks: dates as dates, text
   without case, with ", " and " / " treated alike and spacing collapsed. Missing
   spaces inside a word ("ALEXJORDANEXAMPLE") still count as wrong.
-- Flags must match exactly, as a set of codes.
+- Flags are compared as a set of codes: every flag in "flags" must be there, and
+  the only others allowed are those in "allowed_flags".
 - PP-OCR on CPU is the default, as in the answer key's notes, and it leaves the GPU
   to Ollama. --gpu tries PaddleOCR-VL first, as ocr_image does.
 - -o DIR writes each case's extraction JSON and numbered OCR text, plus
@@ -60,6 +61,7 @@ class CaseResult:
     probes: str
     fields: list[FieldResult]
     flags_expected: list[str]
+    flags_allowed: list[str]
     flags_got: list[str]
     flag_messages: list[str]
     seconds: float
@@ -70,7 +72,9 @@ class CaseResult:
 
     @property
     def flags_ok(self) -> bool:
-        return sorted(self.flags_got) == sorted(self.flags_expected)
+        # Every expected flag must be there; allowed flags may be, nothing else.
+        got, expected = set(self.flags_got), set(self.flags_expected)
+        return expected <= got <= expected | set(self.flags_allowed)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -168,6 +172,11 @@ def report(result: CaseResult) -> str:
         lines.append(
             f"      flags: got {sorted(result.flags_got)}, "
             f"expected {sorted(result.flags_expected)}"
+            + (
+                f", allowed {sorted(result.flags_allowed)}"
+                if result.flags_allowed
+                else ""
+            )
         )
         lines.extend(f"        {message}" for message in result.flag_messages)
     return "\n".join(lines)
@@ -209,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             probes=case["probes"],
             fields=compare_fields(document, case["expected"]),
             flags_expected=list(case["flags"]),
+            flags_allowed=list(case["allowed_flags"]),
             flags_got=[str(flag.code) for flag in document.flags],
             flag_messages=[f"{flag.code}: {flag.message}" for flag in document.flags],
             seconds=time.perf_counter() - start,

@@ -22,6 +22,7 @@ from api.schemas import (
 TODAY = date(2026, 6, 15)
 
 document_adapter: TypeAdapter[Document] = TypeAdapter(Document)
+IDENTIFIER: TypeAdapter[ExtractedField[str]] = TypeAdapter(schemas.IdentifierField)
 
 
 @pytest.fixture(autouse=True)
@@ -610,14 +611,12 @@ def test_invented_raw_text_is_rejected_with_instructions() -> None:
 
 
 def test_value_without_raw_text_is_rejected() -> None:
-    no_source = {"value": "FL-4821-7730", "confidence": "high"}
+    no_source = {"value": "ALEX JORDAN EXAMPLE", "confidence": "high"}
     with (
         schemas.source_lines(NATIONAL_ID_LINES),
-        pytest.raises(
-            ValidationError, match="document_number has a value but no raw_text"
-        ),
+        pytest.raises(ValidationError, match="full_name has a value but no raw_text"),
     ):
-        document_adapter.validate_python(national_id(document_number=no_source))
+        document_adapter.validate_python(national_id(full_name=no_source))
 
 
 def test_null_value_raw_text_is_not_checked() -> None:
@@ -633,3 +632,73 @@ def test_no_check_outside_source_lines() -> None:
     with schemas.source_lines(NATIONAL_ID_LINES):
         pass
     document_adapter.validate_python(national_id(issue_date=invented))
+
+
+# --- identifiers must be copied exactly from raw_text ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "raw_text"),
+    [
+        ("FL-4821-7730", "FL-4821-7730"),
+        ("DP-0098-2231", "Permit No.: DP-0098-2231"),  # a leading label
+        ("DP-0098-2231", "PermitNo.:DP-0098-2231"),  # OCR dropped the spaces
+        ("FX7654321", "FX 765 4321"),  # whitespace is ignored
+        ("BC/1990/004512", "Reg. no. BC/1990/004512"),
+    ],
+)
+def test_identifier_found_in_raw_text(value: str, raw_text: str) -> None:
+    field = IDENTIFIER.validate_python(fld(value, raw_text=raw_text))
+    assert field.value == value
+
+
+@pytest.mark.parametrize(
+    ("value", "raw_text"),
+    [
+        ("FL-4821-773:0", "FL-4821-7730"),  # seen live: a colon added
+        ("FL482177300", "FL-4821-7730"),  # punctuation dropped
+        ("FX7654321", "FX765432I"),  # an OCR misread "corrected"
+        ("fl-4821-7730", "FL-4821-7730"),  # case changed
+    ],
+)
+def test_identifier_not_in_raw_text_is_rejected(value: str, raw_text: str) -> None:
+    with pytest.raises(ValidationError, match="copy the number into value exactly"):
+        IDENTIFIER.validate_python(fld(value, raw_text=raw_text))
+
+
+@pytest.mark.parametrize("confidence", ["high", "medium", "low"])
+def test_identifier_check_applies_at_every_confidence(confidence: str) -> None:
+    with pytest.raises(ValidationError, match="is not in raw_text"):
+        IDENTIFIER.validate_python(
+            fld("FL-4821-773:0", confidence, raw_text="FL-4821-7730")
+        )
+
+
+def test_identifier_without_raw_text_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="has no raw_text"):
+        IDENTIFIER.validate_python({"value": "FL-4821-7730", "confidence": "high"})
+
+
+def test_null_identifier_is_not_checked() -> None:
+    kept = {"value": None, "raw_text": "FL-4821-7730", "confidence": "none"}
+    assert IDENTIFIER.validate_python(kept).value is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["document_number", "permit_number", "passport_number", "registration_number"],
+)
+def test_every_number_field_is_an_identifier(name: str) -> None:
+    owners = [m for m in schemas.DOCUMENT_MODELS.values() if name in m.model_fields]
+    assert owners
+    for model in owners:
+        assert schemas.IDENTIFIER_CHECK in model.model_fields[name].metadata
+
+
+def test_number_fields_add_nothing_to_the_schema() -> None:
+    # The prompt plus schema is near Ollama's 4,096-token default context, so the
+    # check must not add a $defs entry: numbers share ExtractedField[str]'s schema.
+    schema = schemas.Passport.model_json_schema()
+    props = schema["properties"]
+    assert props["passport_number"] == props["full_name"]
+    assert not any("Identifier" in name for name in schema["$defs"])
