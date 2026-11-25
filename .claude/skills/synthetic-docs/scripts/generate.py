@@ -8,8 +8,9 @@ seed: Faker and the handwriting jitter are seeded, so rerunning gives byte-ident
 files.
 
 Everything is fictional: the island (the Commonwealth of Exampla), its parishes and
-towns, the people, the companies and every number. Every image carries a tiled
-"SPECIMEN - FICTIONAL" watermark, added by save(), the only way images are written.
+towns, the people, the companies and every number. Every image carries a
+"SPECIMEN - FICTIONAL" watermark band in its bottom margin, added by save(), the
+only way images are written.
 
 answers.json has the same format as synthetic/ids/expected.json, so
 scripts/run_synthetic.py --answer-key can score it. Each entry also has
@@ -266,21 +267,31 @@ def render_form(
 
 
 def stamp_specimen(image: Image.Image) -> Image.Image:
-    """Tile a diagonal, semi-transparent "SPECIMEN - FICTIONAL" across the image."""
+    """Mark the image "SPECIMEN - FICTIONAL" in a band in the bottom margin.
+
+    The band is clear of every field, so OCR reads it as one line of its own. Two
+    earlier versions put text over the page and broke extraction live:
+    - tiled across the whole image (alpha 95): PP-OCR dropped or cut the values
+      underneath, leaving 12 of 29 expected values in the OCR text (28 unmarked),
+      and every case failed;
+    - one large faint diagonal (alpha 50): PP-OCR read it where it crossed blank
+      space, and qwen3:4b appended the fragment "FICTION" to the JP letter's address.
+    """
     width, height = image.size
-    side = int((width**2 + height**2) ** 0.5) + 1
-    layer = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    f = font(56)
-    step_x = int(draw.textlength(WATERMARK, font=f)) + 140
-    for row, y in enumerate(range(0, side, 230)):
-        for x in range(-(row % 2) * step_x // 2, side, step_x):
-            draw.text((x, y), WATERMARK, font=f, fill=(178, 34, 34, 95))
-    layer = layer.rotate(30, resample=Image.Resampling.BICUBIC)
-    left, top = (side - width) // 2, (side - height) // 2
-    layer = layer.crop((left, top, left + width, top + height))
+    band = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(band)
+    top = height - 78
+    draw.rectangle((30, top, width - 31, top + 46), fill=(178, 34, 34, 40))
+    text = f"{WATERMARK}  -  NOT A REAL DOCUMENT"
+    f = font(28)
+    draw.text(
+        ((width - draw.textlength(text, font=f)) / 2, top + 8),
+        text,
+        font=f,
+        fill=(178, 34, 34, 255),
+    )
     stamped = image.convert("RGBA")
-    stamped.alpha_composite(layer)
+    stamped.alpha_composite(band)
     return stamped.convert("RGB")
 
 
