@@ -22,6 +22,7 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.6",
     "pillow>=10.1",
+    "faker>=40.63.0",
 ]
 # Optional and large: install with `uv sync --group ocr`.
 ocr = [

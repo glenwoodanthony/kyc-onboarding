@@ -100,7 +100,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="write each case's JSON and OCR text, and summary.json, here",
     )
     parser.add_argument(
-        "--answer-key", type=Path, default=ANSWER_KEY, help=argparse.SUPPRESS
+        "--answer-key",
+        type=Path,
+        default=ANSWER_KEY,
+        metavar="FILE",
+        help="answer key to score against (default synthetic/ids/expected.json; "
+        "e.g. synthetic/caribbean/answers.json)",
     )
     return parser.parse_args(argv)
 

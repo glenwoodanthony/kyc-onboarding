@@ -1,0 +1,108 @@
+[
+  {
+    "image": "synthetic/caribbean_mismatch/national_id.png",
+    "declared_type": "national_id",
+    "country": "Exampla",
+    "probes": "Typed card; surname and given names printed separately, so full_name must be assembled; dates like '14 MAR 1988'.",
+    "expected": {
+      "full_name": "LATOYA ANTOINETTE REID",
+      "date_of_birth": "1968-04-15",
+      "expiry_date": "2034-10-22",
+      "document_number": "166-131-860",
+      "issue_date": "2024-10-22"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": true
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/birth_certificate_typed.png",
+    "declared_type": "birth_certificate",
+    "country": "Exampla",
+    "probes": "Registrar General's form with typed entries; the mother's and father's names and the registration date must not be taken for the child's. The child's surname differs from the ID (--mismatch), so a packet with the ID gets NAME_MISMATCH.",
+    "expected": {
+      "full_name": "Latoya Antoinette Campbell",
+      "date_of_birth": "1968-04-15",
+      "registration_number": "B-13909/1968",
+      "place_of_birth": "Demo Heights Public Hospital, St. Placeholder"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": false
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/birth_certificate_handwritten.png",
+    "declared_type": "birth_certificate",
+    "country": "Exampla",
+    "probes": "Registrar General's form with handwritten entries; the mother's and father's names and the registration date must not be taken for the child's. The child's surname differs from the ID (--mismatch), so a packet with the ID gets NAME_MISMATCH.",
+    "expected": {
+      "full_name": "Latoya Antoinette Campbell",
+      "date_of_birth": "1968-04-15",
+      "registration_number": "B-13909/1968",
+      "place_of_birth": "Demo Heights Public Hospital, St. Placeholder"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": false
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/utility_bill.png",
+    "declared_type": "utility_bill",
+    "country": "Exampla",
+    "probes": "Bill with a three-line address up to the parish.",
+    "expected": {
+      "full_name": "LATOYA ANTOINETTE REID",
+      "address": "Lot 48 Hibiscus Lane, Demo Heights, St. Example",
+      "provider": "Exampla Light & Power Co. Ltd",
+      "statement_date": "2026-09-24"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": true
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/utility_bill_relative.png",
+    "declared_type": "utility_bill",
+    "country": "Exampla",
+    "probes": "Bill at the applicant's address but in a relative's name: full_name is the relative's, and a packet with the ID gets NAME_MISMATCH.",
+    "expected": {
+      "full_name": "BEVERLEY MARIA REID",
+      "address": "Lot 48 Hibiscus Lane, Demo Heights, St. Example",
+      "provider": "Exampla National Water Commission",
+      "statement_date": "2026-09-26"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": false
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/jp_letter.png",
+    "declared_type": "address_letter",
+    "country": "Exampla",
+    "probes": "Justice of the Peace letter certifying residence; issuer is the JP's signature line, and the address is inside the body text.",
+    "expected": {
+      "full_name": "Latoya Antoinette Reid",
+      "address": "Lot 48 Hibiscus Lane, Demo Heights, St. Example",
+      "issuer": "Neville B. Grant, J.P.",
+      "letter_date": "2026-10-27"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": true
+  },
+  {
+    "image": "synthetic/caribbean_mismatch/payslip.png",
+    "declared_type": "payslip",
+    "country": "Exampla",
+    "probes": "Payslip with the address on one line and a numeric pay date.",
+    "expected": {
+      "full_name": "Latoya Antoinette Reid",
+      "employer_name": "Port Fictional Shipping Co. Ltd",
+      "pay_date": "2026-09-30",
+      "address": "Lot 48 Hibiscus Lane, Demo Heights, St. Example"
+    },
+    "flags": [],
+    "allowed_flags": [],
+    "matches_applicant": true
+  }
+]
